@@ -1,0 +1,69 @@
+# afocal relay with OAPs
+
+[optical_system]
+osys_type = 'poppy.FresnelOpticalSystem'
+name='OAP Relay'
+pupil_diameter='0.06m'
+npix=256
+beam_ratio=0.25
+wavelength='630nm'
+
+[EP]
+optic_type = 'poppy.CircularAperture'
+radius = '0.03m'
+
+[OAP1]
+is_compound='True'
+dz='0.99437500000m'
+[OAP1.stop]
+optic_type = 'poppy.CircularAperture'
+radius = '0.1m'
+[OAP1.surface]
+optic_type = 'poppy_utils.ABCPSDWFE'
+amp_params = [1, 3, 2.5] # abc PSD
+wfe_params = [1, 3, 2.5] # abc PSD
+wfe_rms = 0.0
+amp_rms = 0.0
+#refl_map = 'filename.fits' # only if abc PSD not provided?
+#surf_map = 'filename.fits' # only if abc PSD not provided?
+#[OAP1.jones]
+#optic_type = 'None'
+#jones_matrix = 'None'
+
+[OAP1_power] # Fresnel optical systems don't behave if powered optics are members of CompoundAnalyticOptics
+optic_type = 'poppy_utils.ConicPhase'
+roc = '2.0m'
+oad = '0.150m'
+k = -1
+
+[IFP]
+optic_type = 'poppy.ScalarTransmission'
+dz='1.0056250000m'
+
+[OAP2]
+is_compound='True'
+dz='1.2570312500m'
+[OAP2.stop]
+optic_type = 'poppy.CircularAperture'
+radius = '0.1m'
+[OAP2.surface]
+optic_type = 'poppy_utils.ABCPSDWFE'
+amp_params = [1, 3, 2.5] # abc PSD
+wfe_params = [1, 3, 2.5] # abc PSD
+wfe_rms = 0.0
+amp_rms = 0.0
+#refl_map = 'filename.fits' # only if abc PSD not provided?
+#surf_map = 'filename.fits' # only if abc PSD not provided?
+#[OAP2.jones]
+#optic_type = 'None'
+#jones_matrix = 'None'
+
+[OAP2_power] # Fresnel optical systems don't behave if powered optics are members of CompoundAnalyticOptics
+optic_type = 'poppy_utils.ConicPhase'
+roc = '2.5m'
+oad = '0.1875m'
+k = -1
+
+[XP]
+optic_type = 'poppy.ScalarTransmission'
+dz='1.2746093729m'
