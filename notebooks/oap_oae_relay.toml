@@ -1,4 +1,4 @@
-# 
+# OAP to focus a collimated beam, followed by a focal relay with an off-axis ellipsoid
 
 [optical_system]
 osys_type = 'poppy.FresnelOpticalSystem'
