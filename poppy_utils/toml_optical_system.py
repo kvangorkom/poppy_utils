@@ -1,3 +1,13 @@
+"""
+To do:
+* X Generate surface/refl errors
+* Auto-gen .toml w/out ABC PSDs from one w/ ABC PSD (i.e., create fixed-ab version)
+* Handle jones pupils (fits optical elements?) (and measured DM map)
+* DM/FSM discretization
+* WFS&C stuff -- jacobian, pupil-corr, EFC, etc? <-- get from Lina? 
+* VVC implementation <--- re-implement SAM or MatrixCoronagraph thing?
+
+"""
 import os
 import pathlib
 import re
@@ -7,10 +17,11 @@ from importlib import import_module
 
 import astropy.units as u
 from astropy.io import fits
-import poppy
-import tomlkit as tk
 
-#from .optics import conic_fl
+import poppy
+from poppy.accel_math import xp
+
+import tomlkit as tk
 
 
 def toml2dict(filename):
@@ -46,10 +57,10 @@ def parse_dict(tomldict):
         if isinstance(sval, str) and (sval.upper() == 'NONE'):
             val[skey] = None
 
-        if isinstance(sval, str) and os.path.isfile(sval):
-            # assume any path is a FITS file for now
-            filepath = pathlib.Path(sval)
-            val[skey] = fits.getdata(filepath)
+        #if isinstance(sval, str) and os.path.isfile(sval):
+        #    # assume any path is a FITS file for now
+        #    filepath = pathlib.Path(sval)
+        #    val[skey] = fits.getdata(filepath)
 
         # if there's a nested entry (optics_args, for example, recursively call this
         # function to parse it)
@@ -57,7 +68,7 @@ def parse_dict(tomldict):
             val[skey] = parse_dict(sval)
 
         # parse optic_type to poppy object
-        if skey == 'optic_type':
+        if skey in ['optic_type', 'planetype']:
             val[skey] = parse_class_str(sval)
 
     return val
@@ -90,9 +101,15 @@ def _extract_value_and_unit(value: str, values_only: bool):
         return value  # Return as-is if no match
 
 def parse_class_str(classstr):
-    mname, fname = classstr.rsplit('.', 1)
+    classstr_split = classstr.split('.')
+    mname = classstr_split[0] # module is first element
+    cname = classstr_split[1:] # path to class is all the rest
     mod = import_module(mname)
-    return getattr(mod, fname)
+    
+    cur = mod
+    for elem in cname:
+        cur = getattr(cur, elem)
+    return cur
 
 def parse_optic(optic):
     """
@@ -188,6 +205,8 @@ def construct_optical_system(optics):
     # then go optic-by-optic and build compound optics in order
     for optic_name, optic in list(optics.items())[1:]: # skip optical_system
 
+        #print(f'loading {optic_name}...')
+
         # treat as a compound optic
         is_compound = optic.get('is_compound', 'False').upper() == 'TRUE'
 
@@ -201,13 +220,14 @@ def construct_optical_system(optics):
             for elem_name, elem_dict in optic.items():
                 if not isinstance(elem_dict, dict):
                     continue # skip non-dictionary entries (e.g., dz)
+                #print(f'loading {elem_name}')
                 optic_type = elem_dict.pop('optic_type')
-                cur_optic = optic_type(**elem_dict)
+                cur_optic = optic_type(**elem_dict, name=f'{optic_name}_{elem_name}')
                 opticslist.append(cur_optic)
             compound_optic = poppy.CompoundAnalyticOptic(opticslist=opticslist, name=optic_name)
         else:
             optic_type = optic.pop('optic_type')
-            compound_optic = optic_type(**optic)
+            compound_optic = optic_type(**optic, name=optic_name)
 
         osys.add_optic(compound_optic, distance=dz)
 
@@ -229,6 +249,101 @@ def load_optical_system(filename):
     optics_dict = toml2dict(filename)
     osys, wf = construct_optical_system(optics_dict)
     return osys, wf, optics_dict
+
+def load_optical_system_into_model(filename):
+    """
+    Load a .toml file into an OpticalModel
+
+    Parameters
+    ----------
+    filename : str
+        Filename of a .toml file
+
+    Returns
+    --------
+        OpticalModel
+    """
+    osys, wf, optics_dict = load_optical_system(filename)
+    return OpticalModel(osys, wavelength=wf.wavelength, wf0=wf)
+
+class OpticalModel(object):
+    """
+    This is intended to be a lightweight wrapper around an
+    optical system. How necessary is this?
+
+    Things this could add:
+    * Easy broadband (calc_psf does this)
+    * Tracking DM state?
+    * Tracking tip/tilt (not sure this is necessary)
+    * Partial propagation?
+    """
+
+    def __init__(self, osys, wavelength=635*u.nm, wf0=None):
+        """
+        sdf
+        """
+
+        # poppy optical system
+        self.osys = osys
+
+        # default input wavefront
+        if wf0 is not None:
+            self._wf0 = deepcopy(wf0)
+
+        self.wavelength = wavelength
+
+        ttms = []
+        dms = []
+        # expose active optics
+        for plane in osys.planes:
+            # tip/tilt stages
+            if isinstance(plane, poppy.TipTiltStage):
+                ttms.append(plane)
+
+            # deformable mirrors
+            if isinstance(plane, poppy.ContinuousDeformableMirror):
+                dms.append(plane)
+        self.ttms = ttms
+        self.dms = dms
+
+    def run_mono(self, wf=None, wavelength=None, tiptilt=(0,0), return_intermediates=False, return_intensity=False):
+        """
+        input_tiptilt = at first plane, NOT TIP/TILT STAGES
+        """
+        wf = deepcopy(self._wf0) if wf is None else deepcopy(wf)
+
+        if wavelength is None:
+            wavelength = self.wavelength
+
+        if wavelength != wf.wavelength:
+            poppy.utils._log.warning('Requested wavelength does not match wavelength of input wavefront! Changing wavefront wavelength to match.')
+            wf.wavelength = wavelength
+
+        if (xp.abs(tiptilt[0]) > 0) or (xp.abs(tiptilt[1]) > 0):
+            wf.tilt(Xangle=tiptilt[0], Yangle=tiptilt[1]) # TO DO: what units?
+
+        wf_out = self.osys.propagate(wf, return_intermediates=return_intermediates)
+        if not return_intensity:
+            return wf_out
+        else:
+            if return_intermediates:
+                return wf_out[0].intensity, wf_out[1]
+            else:
+                return wf_out.intensity
+
+    def run_broadband(self, cenwave, bw, nwaves=20, **kwargs):
+        """
+        Wrapper around run_mono
+
+        Input = cenwave, bw, and num_waves? or just do list of wavelengths?
+        """
+        wavelens = xp.linspace(cenwave*(1-bw/2.0), cenwave*(1+bw/2.0), num=nwaves)
+
+        out = []
+        for i, wavelen in enumerate(wavelens): # note -- currently does not let wavefront change with wavelength
+            out.append( self.run_mono(wavelength=wavelen, **kwargs) )
+
+        return out
 
 
 # ----- some analysis tools -----

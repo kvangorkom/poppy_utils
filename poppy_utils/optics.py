@@ -1,4 +1,8 @@
+from pathlib import Path
+
 import astropy.units as u
+from astropy.io import fits
+
 import poppy
 from poppy import utils, wfe
 from poppy.accel_math import xp
@@ -146,36 +150,6 @@ def get_effective_distance_from_conic_vertex(roc, k, oad, vertex_distance):
     x = vertex_distance - sag
     return xp.sqrt(x**2 + y**2)
 
-class Model(object):
-    """
-    This is intended to be a lightweight wrapper around an
-    optical system. How necessary is this?
-
-    Things this could add:
-    * Easy broadband (calc_psf does this)
-    * Tracking DM state?
-    * Tracking tip/tilt (not sure this is necessary)
-    * Partial propagation?
-    """
-
-    def __init__(self):
-        """
-        sdf
-        """
-        pass
-
-    def run_mono(self, end_idx=-1, return_intermediates=False, wf=None, tiptilt=(0,0)):
-        if wf is None:
-            wf = some_default
-        
-        wf.tilt(tiptilt) # what units?
-
-        self.osys.propagate(wf) # other units?
-
-    def run_broadband(self, waves, wf=None, tiptilt=(0,0)):
-        pass
-
-
 class ConicPhase(poppy.QuadraticLens):
     """
     General phase for a conic surface
@@ -270,152 +244,32 @@ class OAP(ConicPhase):
                          planetype=planetype,
                          name=name,
                          **kwargs)
-    
-# class OAP(poppy.QuadraticLens):
-#     """
-#     On-axis representation of an off-axis parabola (OAP)
 
-#     Thin wrapper for QaudraticLens. This calculates
-#     an effective focal length from a radius of curvature
-#     and an off-axis distance and then represents
-#     the OAP with a quadratic surface sag.
+class SimpleTipTiltStage(poppy.TipTiltStage):
+    """
+    Lightweight wrapper around poppy.TipTiltStage
+    that assumes a poppy.ScalarTransmission optic
+    """
 
-#     Parameters
-#     ----------
-#     roc : float or astropy.Quantity of type length
-#         Radius of curvature
-#     oad : float or astropy.Quantity of type length
-#         Off-axis distance of the OAP
-#     k : float or astropy.Quantity of type length
-#         Conic constant
-#     name : string
-#         Descriptive string name
-#     planetype : poppy.PlaneType constant
-#         plane type
+    def __init__(self, *args, **kwargs):
+        optic = poppy.ScalarTransmission(name=kwargs.pop('name', None))
+        super().__init__(optic=optic, *args, **kwargs)
 
-#     """
+class InterpolatedFITSOpticalElement(poppy.FITSOpticalElement):
+    """
+    TO DO: For loading DM and jones pupils
 
-#     @utils.quantity_input(f_lens=u.m)
-#     def __init__(self,
-#                  roc=1.0 * u.m,
-#                  oad=1.0 * u.m,
-#                  planetype=poppy.optics.PlaneType.unspecified,
-#                  name='OAP',
-#                  **kwargs):
-#         f_lens = self._get_oap_fl(roc, oad)
-#         poppy.QuadPhase.__init__(self,
-#                            f_lens,
-#                            planetype=planetype,
-#                            name=name,
-#                            **kwargs)
-#         self.fl = f_lens.to(u.m)
-#         poppy.utils._log.debug("Initialized: " + self.name + ", fl ={0:0.2e}".format(self.fl))
-        
-#     def _get_oap_fl(self, roc, oad):
-#         # conic focal lenght for conic constatn k=-1
-#         vfl = roc/2
-#         del0 = oad**2 / (2*roc)
-#         a   = vfl - del0
-#         efl = xp.sqrt(a**2 + oad**2)
-#         return efl
+    NOTE: Jones pupils have different dimensions and need to be handled differently -- may need
+    a separate subclass that makes a JonesMatrixOpticalElement instead of something with amplitude/opd
 
-#     def __str__(self):
-#         return "OAP: {0}, with focal length {1}".format(self.name, self.fl)
-    
+    Load in a fits file and dynamically interpolate onto pixelscale/grid
+    """
 
-# class ConicPhase(poppy.optics.AnalyticOpticalElement):
-#     """
-#     General phase for a conic surface
+    def __init__(self, *args, **kwargs):
+        super().__init__(self, *args, **kwargs)
 
-#     Parameters
-#     --------------
-#     TBD
-
-
-#     TO DO:
-#     * drop OAD? This is dangerous
-
-#     """
-
-#     def __init__(self,
-#                  roc,
-#                  k,
-#                  oad=0 * u.m,
-#                  planetype=poppy.optics.PlaneType.intermediate,
-#                  name='Conic Wavefront Curvature Operator',
-#                  **kwargs):
-#         poppy.AnalyticOpticalElement.__init__(self,
-#                                               name=name,
-#                                               planetype=planetype,
-#                                               **kwargs)
-#         self.roc = roc
-#         self.k = k
-#         self.oad = oad # ignored for now
-        
-#     def get_opd(self, wave):
-#         """
-        
-#         TO DO: enforce some limits to the curvature (can't go imaginary)
-        
-#         """
-#         y, x = wave.coordinates()
-        
-#         opd = (x**2 + y**2) / ( self.roc + np.sqrt(self.roc**2 - (self.k+1)*(x**2 + y**2)) )
-#         return opd
-    
-# class Conic(poppy.QuadraticLens):
-#     """
-#     On-axis representation of a general conic surface
-
-#     Thin wrapper for QaudraticLens. This calculates
-#     an effective focal length from a radius of curvature,
-#     conic constant, and an off-axis distance and then represents
-#     the OAP with a quadratic surface sag.
-    
-#     TO DO: This just calculate a single EFL, which can't be right
-#     for a general conic.
-
-#     Parameters
-#     ----------
-#     roc : float or astropy.Quantity of type length
-#         Radius of curvature
-#     oad : float or astropy.Quantity of type length
-#         Off-axis distance of the OAP
-#     k : float or astropy.Quantity of type length
-#         Conic constant
-#     name : string
-#         Descriptive string name
-#     planetype : poppy.PlaneType constant
-#         plane type
-
-#     """
-
-#     @utils.quantity_input(roc=u.m, oad=u.m)
-#     def __init__(self,
-#                  roc=1.0 * u.m,
-#                  k = -1,
-#                  oad=1.0 * u.m,
-#                  planetype=poppy.optics.PlaneType.unspecified,
-#                  name='OAP',
-#                  **kwargs):
-#         f_lens = self._get_conic_fl(roc, k, oad)
-#         poppy.QuadPhase.__init__(self,
-#                            f_lens,
-#                            planetype=planetype,
-#                            name=name,
-#                            **kwargs)
-#         self.fl = f_lens.to(u.m)
-#         poppy.utils._log.debug("Initialized: " + self.name + ", fl ={0:0.2e}".format(self.fl))
-
-#     def _get_conic_fl(self, roc, k, oad):
-#         f_parent = roc/2
-#         sag = oad**2 / ( roc + xp.sqrt(roc**2 - (k+1)*oad**2) )
-#         efl = ( f_parent - sag ) / xp.cos(xp.arctan(oad/(f_parent - sag)))
-#         return efl
-
-#     def __str__(self):
-#         return "Conic: {0}, with focal length {1}".format(self.name, self.fl)
-
+    def _interpolate_onto_plane_sampling(self):
+        pass
 
 class ABCPSDWFE(poppy.WavefrontError):
     """
@@ -424,6 +278,12 @@ class ABCPSDWFE(poppy.WavefrontError):
     To do: eqn goes here.
     To do: parameter a is currently ignored
     To do: if seed is used, it'll generate the same surface for both amplitude and phase
+
+    Note that this differs from other Statistical WFE classes in two ways:
+    - Both amplitude and OPD maps are generated
+    - Maps are only generated one time (NOT with every propagation) -- this can be circumvented
+    by setting self.opd and self.amp to None between runs.
+        - The exception to this is if the wavefront pixelscale changes -- this forces a recomputation
 
     Parameters
     ----------
@@ -445,7 +305,8 @@ class ABCPSDWFE(poppy.WavefrontError):
                  wfe_rms=50*u.nm,
                  amp_params=(1.0, 3.0, 2.5),
                  amp_rms=0,
-                 seed=None,
+                 amp_seed=None,
+                 wfe_seed=None,
                  **kwargs):
 
         super().__init__(name=name, **kwargs)
@@ -453,7 +314,12 @@ class ABCPSDWFE(poppy.WavefrontError):
         self.wfe_rms = wfe_rms
         self.amp_params = amp_params
         self.amp_rms = amp_rms
-        self.seed = seed
+        self.amp_seed = amp_seed
+        self.wfe_seed = wfe_seed
+
+        self.opd = None
+        self.amp = None
+        self.pixelscale = None
 
     @wfe._check_wavefront_arg
     def get_opd(self, wave):
@@ -465,14 +331,18 @@ class ABCPSDWFE(poppy.WavefrontError):
             scale, or a float giving the wavelength in meters
             for a temporary Wavefront used to compute the OPD.
         """
-        self.opd = get_abc_psd_surface(wave, self.wfe_params, self.wfe_rms, seed=self.seed).value
+        if (self.opd is None) or (wave.pixelscale != self.pixelscale):
+            self.opd = get_abc_psd_surface(wave, self.wfe_params, self.wfe_rms, seed=self.amp_seed).to(u.meter).value
+            self.pixelscale = wave.pixelscale
         return self.opd
 
     @wfe._check_wavefront_arg
     def get_transmission(self, wave):
-        amp = get_abc_psd_surface(wave, self.amp_params, self.amp_rms, seed=self.seed)
-        amp = 1 + amp # ABC PSD surface is centered at 0. This shifts to 1. 
-        self.amp = amp
+        if (self.amp is None) or (wave.pixelscale != self.pixelscale):
+            amp = get_abc_psd_surface(wave, self.amp_params, self.amp_rms, seed=self.wfe_seed)
+            amp = 1 + amp # ABC PSD surface is centered at 0. This shifts to 1.
+            self.amp = amp
+            self.pixelscale = wave.pixelscale
         return self.amp
 
 def get_abc_psd_surface(wave, abc, rms, seed=None):
@@ -496,6 +366,52 @@ def get_abc_psd_surface(wave, abc, rms, seed=None):
     phase_screen -= xp.mean(phase_screen)  # force zero-mean
     phase_screen_normalized = phase_screen / xp.std(phase_screen) * rms  # normalize to wanted RMS
     return phase_screen_normalized
+
+def save_surfaces_and_reflectivities(model, outdir, overwrite=False):
+    """
+    Given a .toml optical system, generate and save surface and reflectivity maps.
+
+    Then the .toml file can point to those.
+    """
+
+    if not outdir.exists():
+        outdir.mkdir()
+
+    # first, run a propagation through optical system
+    # to force phase/amplitude screens to be generated
+    print('Running model to get pixelscales at each plane.')
+    model.run_mono()
+
+    # loop over elements of optical system
+    for optic in model.osys.planes:
+        # if it's compound, loop over the optics in the compound optic
+        if isinstance(optic, poppy.CompoundAnalyticOptic):
+            for optic_elem in optic.opticslist:
+                if isinstance(optic_elem, poppy.WavefrontError):
+                    amp = optic_elem.amp
+                    opd = optic_elem.opd
+                    name = optic.name
+                    pixelscale = optic_elem.pixelscale
+        elif isinstance(optic, poppy.WavefrontError):
+            amp = optic.amp
+            opd = optic.opd
+            name = optic.name
+            pixelscale = optic.pixelscale
+        # else do nothing
+
+        header = fits.Header({
+            'PIXELSCL' : pixelscale.to(u.m / u.pix).value,
+            'PIXUNIT' : 'meter',
+            'OPTIC' : name,
+            'NAME' : name,
+        })
+        path = Path(outdir / f'{name}_opd.fits')
+        print(f'Writing out OPD file for {name} to {path}')
+        fits.writeto(path, opd, header=header, overwrite=overwrite)
+
+        print(f'Writing out amplitude file for {name} to {path}')
+        path = Path(outdir / f'{name}_amp.fits')
+        fits.writeto(path, amp, header=header, overwrite=overwrite)
 
 
 
