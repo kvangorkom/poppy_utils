@@ -266,7 +266,7 @@ def load_optical_system_into_model(filename):
         OpticalModel
     """
     osys, wf, optics_dict = load_optical_system(filename)
-    return OpticalModel(osys, wavelength=wf.wavelength, wf0=wf)
+    return OpticalModel(osys, wavelength=wf.wavelength, wf0=wf, toml_dict=optics_dict)
 
 class OpticalModel(object):
     """
@@ -280,13 +280,16 @@ class OpticalModel(object):
     * Partial propagation?
     """
 
-    def __init__(self, osys, wavelength=635*u.nm, wf0=None):
+    def __init__(self, osys, wavelength=635*u.nm, wf0=None, toml_dict=None):
         """
         sdf
         """
 
         # poppy optical system
         self.osys = osys
+
+        # if given, save the toml dict
+        self.toml_dict = toml_dict
 
         # default input wavefront
         if wf0 is not None:

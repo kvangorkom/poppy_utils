@@ -1,4 +1,5 @@
 from copy import deepcopy
+from collections import OrderedDict
 from pathlib import Path
 
 import astropy.units as u
@@ -10,6 +11,8 @@ import poppy
 from poppy import utils, wfe
 from poppy.accel_math import xp
 from poppy.wfe import _wave_y_x_to_rho_theta
+
+import tomlkit as tk
 
 def get_conic_sag(roc, k, r):
     """
@@ -255,8 +258,10 @@ class SimpleTipTiltStage(poppy.TipTiltStage):
     """
 
     def __init__(self, *args, **kwargs):
-        optic = poppy.ScalarTransmission(name=kwargs.pop('name', None))
+        name = kwargs.pop('name', None)
+        optic = poppy.ScalarTransmission(name=name)
         super().__init__(optic=optic, *args, **kwargs)
+        self.name = name
 
 class InterpolatedFITSOpticalElement(poppy.FITSOpticalElement):
     """
@@ -370,13 +375,29 @@ def get_abc_psd_surface(wave, abc, rms, seed=None):
     phase_screen_normalized = phase_screen / xp.std(phase_screen) * rms  # normalize to wanted RMS
     return phase_screen_normalized
 
-def save_surfaces_and_reflectivities(model, outdir, write_toml=False, toml_dict=None, overwrite=False):
+def save_surfaces_and_reflectivities(model, outdir, orig_toml_path=None, overwrite=False):
     """
     Given a .toml optical system, generate and save surface and reflectivity maps.
 
-    Then the .toml file can point to those.
-
     TO DO: I think this breaks if you have more than one WavefrontError in a compound optic
+
+    Parameters
+    ----------
+    model : OpticalModel
+        Optical model generated from a .toml file
+    outdir : str
+        Directory to save amplitude and OPD files to. Will be
+        created if it does not exist.
+    orig_toml_path : str, optional
+        Path to original .toml file from which the optical model
+        was created. If given, a new "static" version of the .toml
+        will be written to outdir.
+    overwrite : bool, optional
+        Overwrite existing files at outdir? Default: False
+
+    Returns
+    --------
+    Nothing
     """
 
     if not outdir.exists():
@@ -387,11 +408,15 @@ def save_surfaces_and_reflectivities(model, outdir, write_toml=False, toml_dict=
     print('Running model to get pixelscales at each plane.')
     model.run_mono()
 
-    if toml_dict is not None:
-        toml_dict = deepcopy(toml_dict)
+    if orig_toml_path is not None:
+        with open(orig_toml_path, mode='r') as f:
+            tkdict = tk.load(f)
+        tk_new = tk.document()
+        tk_new.add('optical_system', tkdict['optical_system'])
+    else:
+        tkdict = None
 
     # loop over elements of optical system
-    outlist = []
     for idx, optic in enumerate(model.osys.planes):
         # if it's compound, loop over the optics in the compound optic
         if isinstance(optic, poppy.CompoundAnalyticOptic):
@@ -408,7 +433,11 @@ def save_surfaces_and_reflectivities(model, outdir, write_toml=False, toml_dict=
             opd = optic.opd
             name = optic.name
             pixelscale = optic.pixelscale
-        # else do nothing
+        else:
+            name = optic.name
+            if tkdict is not None:
+                tk_new.add(name, tkdict[name])
+            continue # do nothing
 
         header = fits.Header({
             'PIXELSCL' : pixelscale.to(u.m / u.pix).value,
@@ -416,6 +445,13 @@ def save_surfaces_and_reflectivities(model, outdir, write_toml=False, toml_dict=
             'OPTIC' : name,
             'NAME' : name,
         })
+
+        # convert to numpy arrays if needed
+        if not isinstance(amp, np.ndarray):
+            amp = amp.get()
+        if not isinstance(opd, np.ndarray):
+            opd = opd.get()
+
         opd_path = Path(outdir / f'{name}_opd.fits')
         print(f'Writing out OPD file for {name} to {opd_path}')
         fits.writeto(opd_path, opd, header=header, overwrite=overwrite)
@@ -426,31 +462,40 @@ def save_surfaces_and_reflectivities(model, outdir, write_toml=False, toml_dict=
 
 
         # update toml dict
-        if toml_dict is not None:
+        if tkdict is not None:
+            print(optic_elem)
 
             if is_compound:
                 # get the new name to use for the non-compound surface
                 new_name = optic_elem.name
-                toml_dict[name].pop(new_name.split('_')[-1])
+                tkdict[name].pop(new_name.split('_')[-1])
                 # add the original dictionary, sans the surface
-                outlist.append((name, toml_dict[name]))
+                tk_new.add(name, tkdict[name])
             else:
                 # not compound, so just remove the old entry
-                toml_dict.pop(name)
+                tkdict.pop(name)
                 new_name = name
             
-            new_entry = {
+            new_entry = tk.table()
+
+            new_dict = {
                 'optic_type' : 'poppy.FITSOpticalElement',
-                'transmission' : amp,
-                'opd' : opd,
+                'transmission' : str(amp_path),
+                'opd' : str(opd_path),
                 'opdunits' : 'meters',
                 'planetype' : 'poppy.poppy_core.PlaneType.intermediate',
             }
+            for key, val in new_dict.items():
+                new_entry.add(key, val)
 
-            outlist.append((new_name, new_entry))
+            tk_new.add(new_name, new_entry)
 
-        new_dict = OrderedDict(outlist)
-        return new_dict
+    if tkdict is not None:
+        toml_path = Path(outdir / f"{tkdict['optical_system']['name']}_static.toml")
+        with open(toml_path, 'w') as fp:
+            tk.dump(tk_new, fp)
+
+
 
 
 
