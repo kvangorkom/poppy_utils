@@ -30,7 +30,7 @@ def toml2dict(filename):
     can be parsed to create a poppy optical system
     """
     with open(filename, mode='r') as f:
-        tkdict = tk.load(f)
+        tkdict = tk.load(f).unwrap()
 
     optics = OrderedDict({})
     for key, val in tkdict.items():
@@ -64,7 +64,8 @@ def parse_dict(tomldict):
 
         # if there's a nested entry (optics_args, for example, recursively call this
         # function to parse it)
-        if isinstance(sval, tk.items.Table):
+        #if isinstance(sval, tk.items.Table):
+        if isinstance(sval, dict):
             val[skey] = parse_dict(sval)
 
         # parse optic_type to poppy object
