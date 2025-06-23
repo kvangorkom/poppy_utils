@@ -1,7 +1,10 @@
+from copy import deepcopy
 from pathlib import Path
 
 import astropy.units as u
 from astropy.io import fits
+
+import numpy as np
 
 import poppy
 from poppy import utils, wfe
@@ -27,7 +30,7 @@ def get_conic_sag(roc, k, r):
         Sag of the conic evaluated at r
     """
     c = 1/roc
-    return c*(r**2) / (1 + xp.sqrt(1-(1+k)*(c*r)**2))
+    return c*(r**2) / (1 + np.sqrt(1-(1+k)*(c*r)**2))
 
 def get_conic_parent_foci(roc, k):
     """
@@ -46,7 +49,7 @@ def get_conic_parent_foci(roc, k):
     f1, f2 : tuple of floats
         Two foci (one may be infinity)
     """
-    eps = xp.sqrt(-1*k)
+    eps = np.sqrt(-1*k)
 
     if k == -1: # avoid dividing by zero
         return roc/2, xp.inf
@@ -82,8 +85,8 @@ def get_conic_effective_foci(roc, k, oad):
     #f2_eff = xp.sqrt( (f2_parent - sag)**2 + oad**2)
 
     # this captures sign and distance
-    f1_eff = ( f1_parent - sag ) / xp.cos(xp.arctan(oad/(f1_parent - sag)))
-    f2_eff = ( f2_parent - sag ) / xp.cos(xp.arctan(oad/(f2_parent - sag)))
+    f1_eff = ( f1_parent - sag ) / np.cos(np.arctan(oad/(f1_parent - sag)))
+    f2_eff = ( f2_parent - sag ) / np.cos(np.arctan(oad/(f2_parent - sag)))
 
     return f1_eff, f2_eff
 
@@ -148,7 +151,7 @@ def get_effective_distance_from_conic_vertex(roc, k, oad, vertex_distance):
     sag = get_conic_sag(roc, k, oad)
     y = oad
     x = vertex_distance - sag
-    return xp.sqrt(x**2 + y**2)
+    return np.sqrt(x**2 + y**2)
 
 class ConicPhase(poppy.QuadraticLens):
     """
@@ -367,11 +370,13 @@ def get_abc_psd_surface(wave, abc, rms, seed=None):
     phase_screen_normalized = phase_screen / xp.std(phase_screen) * rms  # normalize to wanted RMS
     return phase_screen_normalized
 
-def save_surfaces_and_reflectivities(model, outdir, overwrite=False):
+def save_surfaces_and_reflectivities(model, outdir, write_toml=False, toml_dict=None, overwrite=False):
     """
     Given a .toml optical system, generate and save surface and reflectivity maps.
 
     Then the .toml file can point to those.
+
+    TO DO: I think this breaks if you have more than one WavefrontError in a compound optic
     """
 
     if not outdir.exists():
@@ -382,10 +387,15 @@ def save_surfaces_and_reflectivities(model, outdir, overwrite=False):
     print('Running model to get pixelscales at each plane.')
     model.run_mono()
 
+    if toml_dict is not None:
+        toml_dict = deepcopy(toml_dict)
+
     # loop over elements of optical system
-    for optic in model.osys.planes:
+    outlist = []
+    for idx, optic in enumerate(model.osys.planes):
         # if it's compound, loop over the optics in the compound optic
         if isinstance(optic, poppy.CompoundAnalyticOptic):
+            is_compound = True
             for optic_elem in optic.opticslist:
                 if isinstance(optic_elem, poppy.WavefrontError):
                     amp = optic_elem.amp
@@ -393,6 +403,7 @@ def save_surfaces_and_reflectivities(model, outdir, overwrite=False):
                     name = optic.name
                     pixelscale = optic_elem.pixelscale
         elif isinstance(optic, poppy.WavefrontError):
+            is_compound = False
             amp = optic.amp
             opd = optic.opd
             name = optic.name
@@ -405,13 +416,43 @@ def save_surfaces_and_reflectivities(model, outdir, overwrite=False):
             'OPTIC' : name,
             'NAME' : name,
         })
-        path = Path(outdir / f'{name}_opd.fits')
-        print(f'Writing out OPD file for {name} to {path}')
-        fits.writeto(path, opd, header=header, overwrite=overwrite)
+        opd_path = Path(outdir / f'{name}_opd.fits')
+        print(f'Writing out OPD file for {name} to {opd_path}')
+        fits.writeto(opd_path, opd, header=header, overwrite=overwrite)
 
-        print(f'Writing out amplitude file for {name} to {path}')
-        path = Path(outdir / f'{name}_amp.fits')
-        fits.writeto(path, amp, header=header, overwrite=overwrite)
+        amp_path = Path(outdir / f'{name}_amp.fits')
+        print(f'Writing out amplitude file for {name} to {amp_path}')
+        fits.writeto(amp_path, amp, header=header, overwrite=overwrite)
+
+
+        # update toml dict
+        if toml_dict is not None:
+
+            if is_compound:
+                # get the new name to use for the non-compound surface
+                new_name = optic_elem.name
+                toml_dict[name].pop(new_name.split('_')[-1])
+                # add the original dictionary, sans the surface
+                outlist.append((name, toml_dict[name]))
+            else:
+                # not compound, so just remove the old entry
+                toml_dict.pop(name)
+                new_name = name
+            
+            new_entry = {
+                'optic_type' : 'poppy.FITSOpticalElement',
+                'transmission' : amp,
+                'opd' : opd,
+                'opdunits' : 'meters',
+                'planetype' : 'poppy.poppy_core.PlaneType.intermediate',
+            }
+
+            outlist.append((new_name, new_entry))
+
+        new_dict = OrderedDict(outlist)
+        return new_dict
+
+
 
 
 
