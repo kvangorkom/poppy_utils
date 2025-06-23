@@ -345,6 +345,12 @@ class OpticalModel(object):
 
         return out
 
+    def inspect_roc(self, do_print=False):
+        """
+        Wrapper around inspect_osys_wf_roc
+        """
+        return inspect_osys_wf_roc(self.osys, self._wf0, do_print=do_print)
+
 
 # ----- some analysis tools -----
 
@@ -375,6 +381,6 @@ def inspect_osys_wf_roc(osys, wf, do_print=False):
         roc = wf.z_w0 - wf.z
         roc_list.append(roc)
         if do_print:
-            print(idx, roc)
+            print(f'Plane {idx}, {wf.location}: {roc}')
 
     return roc_list
