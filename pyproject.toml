@@ -113,5 +113,11 @@ ignore = [
 [tool.setuptools.package-data]
 utils_config = ["py.typed"]
 
+[tool.setuptools.packages.find]
+namespaces = false
+
 [tool.coverage.run]
+source = [
+    "poppy_utils",
+]
 omit=["poppy_utils/_version.py"]
