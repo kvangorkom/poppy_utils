@@ -332,7 +332,7 @@ class ABCPSDWFE(poppy.WavefrontError):
             for a temporary Wavefront used to compute the OPD.
         """
         if (self.opd is None) or (wave.pixelscale != self.pixelscale):
-            self.opd = get_abc_psd_surface(wave, self.wfe_params, self.wfe_rms, seed=self.amp_seed).to(u.meter).value
+            self.opd = get_abc_psd_surface(wave, self.wfe_params, self.wfe_rms.to(u.meter).value, seed=self.amp_seed)
             self.pixelscale = wave.pixelscale
         return self.opd
 
@@ -349,7 +349,7 @@ def get_abc_psd_surface(wave, abc, rms, seed=None):
     """
     Given a poppy.Wavefront, generate a surface defined by an ABC PSD
     """
-    f1 = xp.fft.fftfreq(wave.shape[0], d=wave.pixelscale).value
+    f1 = xp.fft.fftfreq(wave.shape[0], d=wave.pixelscale.value)
     y, x = xp.meshgrid(f1, f1)
     rho = xp.sqrt(y**2 + x**2) # radial spatial frequency
 

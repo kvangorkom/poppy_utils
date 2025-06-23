@@ -20,6 +20,7 @@ from astropy.io import fits
 
 import poppy
 from poppy.accel_math import xp
+import numpy as np
 
 import tomlkit as tk
 
@@ -307,18 +308,21 @@ class OpticalModel(object):
         self.ttms = ttms
         self.dms = dms
 
+    @poppy.utils.quantity_input(wavelength=u.meter)
     def run_mono(self, wf=None, wavelength=None, tiptilt=(0,0), return_intermediates=False, return_intensity=False):
         """
         input_tiptilt = at first plane, NOT TIP/TILT STAGES
         """
         wf = deepcopy(self._wf0) if wf is None else deepcopy(wf)
 
-        if wavelength is None:
+        if wavelength is None: # not given, set to model default
             wavelength = self.wavelength
 
-        if wavelength != wf.wavelength:
-            poppy.utils._log.warning('Requested wavelength does not match wavelength of input wavefront! Changing wavefront wavelength to match.')
-            wf.wavelength = wavelength
+        # should we warn about this? It's kind of the whole point of the wavelength override
+        #if wavelength != wf.wavelength:
+        #    poppy.utils._log.warning('Requested wavelength does not match wavelength of input wavefront! Changing wavefront wavelength to match.')
+        #    wf.wavelength = wavelength
+        wf.wavelength = wavelength
 
         if (xp.abs(tiptilt[0]) > 0) or (xp.abs(tiptilt[1]) > 0):
             wf.tilt(Xangle=tiptilt[0], Yangle=tiptilt[1]) # TO DO: what units?
@@ -338,7 +342,7 @@ class OpticalModel(object):
 
         Input = cenwave, bw, and num_waves? or just do list of wavelengths?
         """
-        wavelens = xp.linspace(cenwave*(1-bw/2.0), cenwave*(1+bw/2.0), num=nwaves)
+        wavelens = np.linspace(cenwave*(1-bw/2.0), cenwave*(1+bw/2.0), num=nwaves)
 
         out = []
         for i, wavelen in enumerate(wavelens): # note -- currently does not let wavefront change with wavelength
