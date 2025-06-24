@@ -386,9 +386,9 @@ def inspect_osys_wf_roc(osys, wf, do_print=False):
 
     roc_list = []
     for idx, wf in enumerate(wflist):
-        roc = wf.z_w0 - wf.z
+        roc = wf.r_c()
         roc_list.append(roc)
         if do_print:
-            print(f'Plane {idx}, {wf.location}: {roc}')
+            print(f'Plane {idx}, {wf.location}: {roc:.3f}')
 
     return roc_list
