@@ -11,6 +11,9 @@ import poppy
 from poppy import utils, wfe
 from poppy.accel_math import xp
 from poppy.wfe import _wave_y_x_to_rho_theta
+from poppy.utils import _log, pad_or_crop_to_shape
+
+tukey =  poppy.accel_math._scipy.signal.windows.tukey
 
 import tomlkit as tk
 
@@ -278,6 +281,161 @@ class InterpolatedFITSOpticalElement(poppy.FITSOpticalElement):
 
     def _interpolate_onto_plane_sampling(self):
         pass
+
+
+class MultiScaleCoronagraph(poppy.poppy_core.OpticalSystem):
+    """ WIP port of hcipy.MultiScaleCoronagraph to poppy.
+    
+    Essentially a mod of the SemiAnalyticCoronagraph that allows
+    (1) extended focal plane masks
+    (2) multi-scale MFTs for sampling purposes
+    
+    To do:
+    * Extend from two-scale to multi-scale
+
+    """
+
+    def __init__(self, existing_optical_system, oversample=8, fpm_box=1.0, window=tukey, to_fpm=False, **kwargs):
+        super(MultiScaleCoronagraph, self).__init__(**kwargs)
+
+        self.name = "SemiAnalyticCoronagraph for " + existing_optical_system.name
+        self.verbose = existing_optical_system.verbose
+        self.source_offset_r = existing_optical_system.source_offset_r
+        self.source_offset_theta = existing_optical_system.source_offset_theta
+        self.planes = existing_optical_system.planes
+        self.npix = existing_optical_system.npix
+        self.pupil_diameter = existing_optical_system.pupil_diameter
+        self.to_fpm = to_fpm
+        
+        
+        self.window_func = window
+
+        
+        self.pupil = self.planes[0]
+        # assume occulter is the 2nd plane
+        self.fpm = self.planes[1]
+
+        # some tweaks for display
+        self.fpm.wavefront_display_hint = 'intensity'
+
+        #self.mask_function = self.occulter
+
+        self.oversample = oversample
+
+        if not np.isscalar(fpm_box):
+            fpm_box = np.array(fpm_box)  # cast to numpy array so the multiplication by 2
+                                                  # just below will work
+        self.fpm_box = fpm_box
+        
+
+        self.fpm_highres = None
+        self.window_lowres = None
+        self.window_highres = None
+
+    def propagate(self,
+                  wavefront,
+                  normalize='first',
+                  return_intermediates=False,
+                  display_intermediates=False):
+        """ Core low-level routine for propagating a wavefront through an optical system
+
+        See docstring of OpticalSystem.propagate for details
+
+        """
+
+        if self.verbose:
+            _log.info(" Propagating wavelength = {0:g} meters using "
+                      "Fast Semi-Analytic Coronagraph method".format(wavefront.wavelength))
+
+        intermediate_wfs = []
+        
+        
+        wavefront *= self.pupil
+
+        #wavefront.history.append("Propagating using Fast Semi-Analytic Method")
+        #wavefront.history.append(" for Coronagraphy (See Soummer et al. 2007).")
+
+
+        # ------- differences from regular propagation begin here --------------
+        
+        nrows = len(self.planes) + 2  # there are some extra display planes
+        wavefront._display_hint_expected_nplanes = nrows  # For display of intermediate steps nicely
+        if (normalize.lower() != 'first') and (normalize.lower() != 'last'):
+            raise NotImplementedError("Only normalizations 'first' or 'last' are implemented for SAMC")
+
+        # Start with a two-step thing
+        # 1. MFT for small region (small window)
+        # 2. FFT over whole region (large window)
+
+        pupil_diam = getattr(self.pupil, 'pupil_diam', None)
+        if pupil_diam is None:
+            pupil_diam = wavefront.diam
+        
+        # taken from MFT Coronagraph
+        metadet_pixelscale = ((wavefront.wavelength / pupil_diam).decompose()
+                              * u.radian).to(u.arcsec) / self.oversample / 2 / u.pixel
+        self.fpm_highres = poppy.Detector(metadet_pixelscale, fov_arcsec=self.fpm_box * 2,
+                                      name='Oversampled Occulter Plane')
+
+        #if return_intermediates:
+        #    intermediate_wfs.append(wavefront_cor.copy())
+
+        #if display_intermediates:  # Display prior to the occulter
+        #    wavefront_cor._display_after_optic(self.occulter_highres, default_nplanes=nrows)
+    
+        # FFT from pupil to full FPM
+        wavefront_lres = wavefront.copy()
+        wavefront_lres.propagate_to(self.fpm) # This should be an FFT?
+        wavefront_lres *= self.fpm # apply low res VVC
+        # apply the window (create if not defined yet)
+        if self.window_lowres is None:
+            npix = xp.int64( wavefront_lres.shape[0] * (self.fpm_highres.fov_arcsec / wavefront_lres.fov) )
+            pad = (wavefront_lres.shape[0] - npix) // 2
+            w1d = self.window_func(npix, alpha=1, sym=False)
+            self.window_lowres = 1 - pad_or_crop_to_shape(xp.outer(w1d, w1d), wavefront_lres.shape)
+        wavefront_lres.wavefront *= self.window_lowres
+        wavefront_lres.propagate_to(self.pupil) # back to input pupil plane
+        #return wavefront_lres
+
+        
+        # MFT from pupil to small FPM region
+        wavefront_hres = wavefront.copy()
+        #wavefront_hres.propagation_hint = 'MFT'
+        wavefront_hres.propagate_to(self.fpm_highres)  # This will be an MFT propagation
+        wavefront_hres *= self.fpm # apply high res VVC
+        # apply the window (create if not defined yet) -- might need to redefine every time
+        if self.window_highres is None:
+            w1d = self.window_func(wavefront_hres.shape[0], alpha=1, sym=False)
+            self.window_highres = xp.outer(w1d, w1d)
+        wavefront_hres.wavefront *= self.window_highres
+        # propagate back to the wavefront_lres plane (which is the pupil, sampled appropriately)
+        wavefront_hres._propagate_mft_inverse(wavefront_lres)#, pupil_npix=wavefront_lres.shape[0]) # back to input pupil plane
+
+                
+        #return wavefront_hres
+        wavefront = wavefront_lres + wavefront_hres
+        
+        # if requested, propagate back to FPM plane so that we end up in the expected plane at the end
+        if self.to_fpm:
+            wavefront.propagate_to(self.fpm)        
+        
+        #wavefront_cor *= self.mask_function
+        #wavefront_cor.current_plane_index += 1
+        #if return_intermediates:
+        #    intermediate_wfs.append(wavefront_cor.copy())
+        #if display_intermediates:  # Display after the occulter (EXTRA PLANE)
+        #    wavefront_cor._display_after_optic(self.occulter_highres, default_nplanes=nrows,)
+
+        # ------- differences from regular propagation end here --------------
+
+        # prepare output arrays
+        if normalize.lower() == 'last':
+            wavefront.normalize()
+
+        if return_intermediates:
+            return wavefront, intermediate_wfs
+        else:
+            return wavefront
 
 class ABCPSDWFE(poppy.WavefrontError):
     """
