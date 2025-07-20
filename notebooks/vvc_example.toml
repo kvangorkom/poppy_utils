@@ -1,0 +1,127 @@
+# ---- Pre-FPM optical system ----
+
+[wavefront]
+optic_type = 'poppy.PolarizedFresnelWavefront'
+wavelength = '630nm'
+npix = 1024
+oversample = 4 # inverse of osys.beam_ratio
+beam_radius = '0.03m' # 05 * osys.pupil_diameter
+
+[[osys]]
+optic_type = 'poppy.FresnelOpticalSystem'
+name='Pre-FPM'
+pupil_diameter='0.06m' # 2x wavefront.beam_radius
+npix=1024
+beam_ratio = 0.25 # inverse of wavefront.oversample
+
+[[osys.optics]]
+name = 'EP'
+optic_type = 'poppy.CircularAperture'
+radius = '0.03m'
+
+[[osys.optics]]
+name='OAP1'
+is_compound= true
+dz='0.99437500000m'
+[[osys.optics.optics]]
+name = 'stop'
+optic_type = 'poppy.CircularAperture'
+radius = '0.1m'
+[[osys.optics.optics]]
+name = 'surface'
+optic_type = 'poppy_utils.ABCPSDWFE'
+amp_params = [1, 3, 2.5] # abc PSD
+wfe_params = [1, 3, 2.5] # abc PSD
+wfe_rms = 5.0
+amp_rms = 0.005
+
+# propagate back to pupil prior to FPM system
+
+[[osys.optics]]
+name='pre-VVC pupil'
+dz='-0.99437500000m'
+optic_type = 'poppy.ScalarTransmission'
+
+# ------ FPM optical system -------
+
+[[osys]]
+optic_type = 'poppy.OpticalSystem'
+name='FPM'
+npix=1024
+oversample=4
+
+[osys.wrapper]
+optic_type = 'poppy_utils.MultiScaleCoronagraph'
+oversample = 24
+fpm_box = 60 # arcsec
+to_fpm = false # can't convert from Fraunhofer image to Fresnel
+
+[[osys.optics]] # not sure if this is quite right
+name = 'pupil'
+optic_type = 'poppy.ScalarTransmission'
+planetype = 'pupil' # only needed for Fraunhofer systems
+
+[[osys.optics]]
+name = 'VVC'
+planetype = 'image' # only needed for Fraunhofer systems
+optic_type = 'poppy.VectorVortexMask'
+charge = 6
+dot_radius = '1arcsec' # this is a f/16 system, so this dot is tiny
+
+#[[osys.optics]]
+#name = 'VVC out'
+#planetype = 'image' # only needed for Fraunhofer systems
+#optic_type = 'poppy.ScalarTransmission'
+
+# ------ Post-FPM optical system -------
+
+[[osys]]
+optic_type = 'poppy.FresnelOpticalSystem'
+name='post FPM'
+npix=1024
+beam_ratio=0.25
+
+# FPM osys goes back to pre-FPM pupil, so now we propagate to OAP1, apply OAP1 power, and then propagate directly to OAP2
+
+[[osys.optics]]
+name='OAP1_power'
+dz='0.99437500000m' # pupil to OAP1 position
+optic_type = 'poppy_utils.ConicPhase'
+roc = '2.0m'
+oad = '0.150m'
+k = -1
+
+[[osys.optics]]
+name = 'OAE'
+is_compound= true
+dz='2.3923850234m' # OAP1 to OAE
+[[osys.optics.optics]]
+optic_type = 'poppy.CircularAperture'
+radius = '0.1m'
+name='stop'
+[[osys.optics.optics]]
+optic_type = 'poppy_utils.ABCPSDWFE'
+amp_params = [1, 3, 2.5] # abc PSD
+wfe_params = [1, 3, 2.5] # abc PSD
+wfe_rms = 5.0
+amp_rms = 0.005
+
+[[osys.optics]] # Fresnel optical systems don't behave if powered optics are members of CompoundAnalyticOptics
+name = 'OAE_power'
+optic_type = 'poppy_utils.ConicPhase'
+roc = '2.0m'
+oad = '0.207m'
+k = -0.2
+
+[[osys.optics]] 
+name = 'XP'
+dz='1.0132638996m'
+optic_type = 'poppy.CircularAperture'
+radius = '0.0285m' # 95% LS 
+
+[[osys.optics]]
+dz = '2.5999761429m'
+name = 'Science detector'
+optic_type = 'poppy.Detector'
+pixelscale = '10micron/pixel'
+fov_pixels = 150
