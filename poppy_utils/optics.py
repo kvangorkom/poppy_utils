@@ -421,10 +421,10 @@ class MultiScaleCoronagraph(poppy.poppy_core.OpticalSystem):
         
         #wavefront_cor *= self.mask_function
         #wavefront_cor.current_plane_index += 1
-        #if return_intermediates:
-        #    intermediate_wfs.append(wavefront_cor.copy())
-        #if display_intermediates:  # Display after the occulter (EXTRA PLANE)
-        #    wavefront_cor._display_after_optic(self.occulter_highres, default_nplanes=nrows,)
+        if return_intermediates:
+            intermediate_wfs.append(wavefront.copy())
+        if display_intermediates:  # Display after the occulter (EXTRA PLANE)
+            wavefront._display_after_optic(self.occulter_highres, default_nplanes=nrows,)
 
         # ------- differences from regular propagation end here --------------
 
