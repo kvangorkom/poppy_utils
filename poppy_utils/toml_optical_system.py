@@ -98,6 +98,13 @@ def parse_dict(tomldict):
         if skey in ['optic_type']: #'planetype'
             val[skey] = parse_class_str(sval)
 
+        # traverse lists to parse
+        if skey == 'optics':
+            vals = []
+            for sval_cur in sval:
+                vals.append(parse_dict(sval_cur))
+            val[skey] = vals
+
     return val
 
 
@@ -227,7 +234,7 @@ def construct_optical_system(systems):
         osys = osys_constructor(**osys_dict) # needs some more args
 
         # then go optic-by-optic and build compound optics in order
-        for optic in optics: # skip optical_system
+        for optic in optics:
 
             #print(f'loading {optic_name}...')
             optic_name = optic['name']
@@ -244,17 +251,18 @@ def construct_optical_system(systems):
                 # construct compound optic out of each optic
                 opticslist = []
                 try:
-                    for elem_dict in optic.items():
+                    for elem_dict in optic['optics']: # nested optics
+                        elem_name = elem_dict.get('name', None)
                         if not isinstance(elem_dict, dict):
                             continue # skip non-dictionary entries (e.g., dz)
                         #print(f'loading {elem_name}')
                         optic_type = elem_dict.pop('optic_type')
                         cur_optic = optic_type(**elem_dict) # , name=f'{optic_name}_{elem_name}'
                         opticslist.append(cur_optic)
-                    compound_optic = poppy.CompoundAnalyticOptic(opticslist=opticslist) # name=optic_name
+                    compound_optic = poppy.CompoundAnalyticOptic(opticslist=opticslist, name=optic_name)
                 except Exception as e: # add info about optic being parsed to general errors
                     raise ValueError(f'Error while parsing optic {elem_name} in {optic_name}') from e
-            else:
+            else: # not compound
                 try:
                     optic_type = optic.pop('optic_type')
                     compound_optic = optic_type(**optic) # name=optic_name
@@ -262,7 +270,7 @@ def construct_optical_system(systems):
                     raise ValueError(f'Error while parsing optic {optic_name}') from e
             if isinstance(osys, poppy.FresnelOpticalSystem):
                 osys.add_optic(compound_optic, distance=dz)
-            elif isinstance(osys, poppy.OpticalSystem):
+            elif isinstance(osys, poppy.OpticalSystem): # Fraunhofer systems need plane types
                 if planetype == 'pupil':
                     osys.add_pupil(compound_optic)
                 elif planetype == 'image':
@@ -441,15 +449,19 @@ def inspect_osys_wf_roc(osys, wf, do_print=False):
         list of radii of curvature
     """
 
-    wf_out, wflist = osys.propagate(deepcopy(wf), return_intermediates=True)
+    wf_out, wflist = osys.propagate(deepcopy(wf), normalize='first', return_intermediates=True)
 
     roc_list = []
     for idx, wf in enumerate(wflist):
-        roc = wf.r_c()
-        dz = wf.z - wf.z_w0
-        if xp.isclose(dz.to(u.m).value, 0.0):
-            roc = np.inf * u.m
-        roc_list.append(roc)
+        if isinstance(wf, poppy.FresnelWavefront):
+            roc = wf.r_c()
+            dz = wf.z - wf.z_w0
+            if xp.isclose(dz.to(u.m).value, 0.0):
+                roc = np.inf * u.m
+            roc_list.append(roc)
+        else: # Fraunhofer
+            roc = np.nan
+            dz = np.nan
         if do_print:
             print(f'Plane {idx}, {wf.location}: {roc:.6f}, {dz:.6f}')
 
