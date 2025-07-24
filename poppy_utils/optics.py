@@ -266,22 +266,41 @@ class SimpleTipTiltStage(poppy.TipTiltStage):
         super().__init__(optic=optic, *args, **kwargs)
         self.name = name
 
-class InterpolatedFITSOpticalElement(poppy.FITSOpticalElement):
+class FITSJonesOpticalElement(poppy.JonesMatrixOpticalElement): #poppy.FITSOpticalElement,
     """
-    TO DO: For loading DM and jones pupils
+    Modification of FITSOpticalElement to handle Jones matrices
 
-    NOTE: Jones pupils have different dimensions and need to be handled differently -- may need
-    a separate subclass that makes a JonesMatrixOpticalElement instead of something with amplitude/opd
+    The FITS file with the Jones pupils are expected to be formatted
+    as 8 x Y x X cubes, where the elements are
+    [Re(E_xx), Im(E_xx), Re(E_xy), Im(E_xy), Re(E_yx), Im(E_yx), Re(E_yy), Im(E_yy)]
 
-    Load in a fits file and dynamically interpolate onto pixelscale/grid
+    Parameters
+    ----------
+    jones_file : str or path-like
+        Path to FITS file with Jones pupil.
+
     """
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(self, *args, **kwargs)
+    def __init__(self, jones_file, pixelscale, **kwargs):
+        self.jones_file = jones_file
 
-    def _interpolate_onto_plane_sampling(self):
-        pass
+        with fits.open(jones_file) as f:
+            jones_cube = f[0].data
 
+        # contrast 2x2xYxX jones pupil (TO DO: check if Exy and Eyx are flipped)
+        jones_matrix = xp.asarray(
+            [[jones_cube[0] + 1j*jones_cube[1], # Exx_re + 1j*Exx_im
+              jones_cube[2] + 1j*jones_cube[3]], # Exy_re + 1j*Exy_im 
+             [jones_cube[4] + 1j*jones_cube[5], # Eyx_re + 1j*Eyx_im
+              jones_cube[6] + 1j*jones_cube[7]]] # Eyy_re + 1j*Eyy_im
+        )
+
+        super().__init__(jones_matrix)
+
+        self.pixelscale = pixelscale
+
+        #poppy.JonesMatrixOpticalElement.__init__(self, jones_matrix)
+        #poppy.FITSOpticalElement.__init__(self, **kwargs)
 
 class MultiScaleCoronagraph(poppy.poppy_core.OpticalSystem):
     """ WIP port of hcipy.MultiScaleCoronagraph to poppy.
