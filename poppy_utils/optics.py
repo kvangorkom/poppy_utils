@@ -266,7 +266,7 @@ class SimpleTipTiltStage(poppy.TipTiltStage):
         super().__init__(optic=optic, *args, **kwargs)
         self.name = name
 
-class FITSJonesOpticalElement(poppy.JonesMatrixOpticalElement): #poppy.FITSOpticalElement,
+class FITSJonesOpticalElement(poppy.JonesMatrixOpticalElement):
     """
     Modification of FITSOpticalElement to handle Jones matrices
 
@@ -298,9 +298,6 @@ class FITSJonesOpticalElement(poppy.JonesMatrixOpticalElement): #poppy.FITSOptic
         super().__init__(jones_matrix)
 
         self.pixelscale = pixelscale
-
-        #poppy.JonesMatrixOpticalElement.__init__(self, jones_matrix)
-        #poppy.FITSOpticalElement.__init__(self, **kwargs)
 
 class MultiScaleCoronagraph(poppy.poppy_core.OpticalSystem):
     """ WIP port of hcipy.MultiScaleCoronagraph to poppy.
