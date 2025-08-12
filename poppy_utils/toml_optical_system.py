@@ -24,6 +24,8 @@ import numpy as np
 
 import tomlkit as tk
 
+from . import dm
+
 
 def toml2dict(filename):
     """
@@ -373,7 +375,7 @@ class OpticalModel(object):
                 ttms.append(plane)
 
             # deformable mirrors
-            if isinstance(plane, poppy.ContinuousDeformableMirror):
+            if isinstance(plane, poppy.ContinuousDeformableMirror) or isinstance(plane, dm.DeformableMirror):
                 dms.append(plane)
         self.ttms = ttms
         self.dms = dms

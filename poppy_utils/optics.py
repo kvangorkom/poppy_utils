@@ -406,7 +406,6 @@ class MultiScaleCoronagraph(poppy.poppy_core.OpticalSystem):
         # apply the window (create if not defined yet)
         if self.window_lowres is None:
             npix = xp.int64( wavefront_lres.shape[0] * (self.fpm_highres.fov_arcsec / wavefront_lres.fov) )
-            pad = (wavefront_lres.shape[0] - npix) // 2
             w1d = self.window_func(npix, alpha=1, sym=False)
             self.window_lowres = 1 - pad_or_crop_to_shape(xp.outer(w1d, w1d), wavefront_lres.shape)
         wavefront_lres.wavefront *= self.window_lowres
