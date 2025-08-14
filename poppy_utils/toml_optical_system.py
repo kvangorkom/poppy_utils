@@ -367,17 +367,20 @@ class OpticalModel(object):
         self.wavelength = wavelength
 
         ttms = []
+        ttms_idx = []
         dms = []
         # expose active optics
-        for plane in osys.planes:
+        for i, plane in enumerate(osys.planes):
             # tip/tilt stages
             if isinstance(plane, poppy.TipTiltStage):
                 ttms.append(plane)
+                ttms_idx.append(i)
 
             # deformable mirrors
             if isinstance(plane, poppy.ContinuousDeformableMirror) or isinstance(plane, dm.DeformableMirror):
                 dms.append(plane)
         self.ttms = ttms
+        self.ttms_idx = ttms_idx
         self.dms = dms
 
     @poppy.utils.quantity_input(wavelength=u.meter)
@@ -420,7 +423,7 @@ class OpticalModel(object):
         for i, wavelen in enumerate(wavelens): # note -- currently does not let wavefront change with wavelength
             out.append( self.run_mono(wavelength=wavelen, **kwargs) )
 
-        return out
+        return out, wavelens
 
     def inspect_roc(self, do_print=False):
         """
