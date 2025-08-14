@@ -347,6 +347,7 @@ class MultiScaleCoronagraph(poppy.poppy_core.OpticalSystem):
         self.fpm_highres = None
         self.window_lowres = None
         self.window_highres = None
+        self.wavelength = None
 
     def propagate(self,
                   wavefront,
@@ -388,7 +389,10 @@ class MultiScaleCoronagraph(poppy.poppy_core.OpticalSystem):
             pupil_diam = wavefront.diam
         
         # taken from MFT Coronagraph
-        metadet_pixelscale = ((wavefront.wavelength / pupil_diam).decompose()
+        if self.wavelength is None:
+            # set this once to avoid changing sampling when evaluating at other wavelengths (I think)
+            self.wavelength  = wavefront.wavelength
+        metadet_pixelscale = ((self.wavelength / pupil_diam).decompose()
                               * u.radian).to(u.arcsec) / self.oversample / 2 / u.pixel
         self.fpm_highres = poppy.Detector(metadet_pixelscale, fov_arcsec=self.fpm_box * 2,
                                       name='Oversampled Occulter Plane')
@@ -471,7 +475,7 @@ class ABCPSDWFE(poppy.WavefrontError):
     name : string
         name of the optic
     psd_params: list of floats
-        (a,b,c)
+        (a,b,c) = (normalization (ignored in favor of wfe arg below), turnover in cycles/m, exponent)
     wfe: astropy quantity
         RMS wfe in linear astropy units, defaults to 50 nm
     radius: astropy quantity
@@ -512,25 +516,28 @@ class ABCPSDWFE(poppy.WavefrontError):
             scale, or a float giving the wavelength in meters
             for a temporary Wavefront used to compute the OPD.
         """
-        if (self.opd is None) or (wave.pixelscale != self.pixelscale):
-            self.opd = get_abc_psd_surface(wave, self.wfe_params, self.wfe_rms.to(u.meter).value, seed=self.amp_seed)
+        if (self.opd is None): #or (wave.pixelscale != self.pixelscale):
+            self.opd = get_abc_psd_wavefront(wave, self.wfe_params, self.wfe_rms.to(u.meter).value, seed=self.amp_seed)
             self.pixelscale = wave.pixelscale
+            self._shape = self.opd.shape
         return self.opd
 
     @wfe._check_wavefront_arg
     def get_transmission(self, wave):
-        if (self.amp is None) or (wave.pixelscale != self.pixelscale):
-            amp = get_abc_psd_surface(wave, self.amp_params, self.amp_rms, seed=self.wfe_seed)
+        if (self.amp is None): #or (wave.pixelscale != self.pixelscale):
+            amp = get_abc_psd_wavefront(wave, self.amp_params, self.amp_rms, seed=self.wfe_seed)
             amp = 1 + amp # ABC PSD surface is centered at 0. This shifts to 1.
             self.amp = amp
             self.pixelscale = wave.pixelscale
+            self._shape = self.amp.shape
         return self.amp
 
-def get_abc_psd_surface(wave, abc, rms, seed=None):
+def get_abc_psd_wavefront(wave, abc, rms, seed=None):
     """
     Given a poppy.Wavefront, generate a surface defined by an ABC PSD
     """
-    f1 = xp.fft.fftfreq(wave.shape[0], d=wave.pixelscale.value)
+    # force to meters for consistency with (a,b,c) parameters
+    f1 = xp.fft.fftfreq(wave.shape[0], d=wave.pixelscale.to(u.m/u.pix).value)
     y, x = xp.meshgrid(f1, f1)
     rho = xp.sqrt(y**2 + x**2) # radial spatial frequency
 
