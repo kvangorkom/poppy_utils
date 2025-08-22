@@ -222,13 +222,16 @@ class QuantizedGaussianDeformableMirror(DeformableMirror):
         # initialize parent
         super().__init__(inf_fun, inf_sampling, **kwargs)
 
+        self.disable_quantization = False
+
     @property
     def command(self):
         return self._command
 
     @command.setter
     def command(self, command_values):
-        command_values = self._discretize_dm_cmd(command_values)
+        if not self.disable_quantization:
+            command_values = self._discretize_dm_cmd(command_values)
         #super().command(command_values)
         command_values *= self.dm_mask
         self._actuators = self.map_command_to_actuators(command_values) # ensure you update the actuators if command is set
