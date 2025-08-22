@@ -6,6 +6,7 @@ import astropy.units as u
 from astropy.io import fits
 
 import numpy as np
+from scipy.special import hyp2f1
 
 import poppy
 from poppy import utils, wfe
@@ -484,12 +485,12 @@ class ABCPSDWFE(poppy.WavefrontError):
         seed for the random phase screen generator
     """
 
-    @utils.quantity_input(wfe_rms=u.nm)
+    #@utils.quantity_input(wfe_rms=u.nm)
     def __init__(self, name='ABC PSD WFE',
                  wfe_params=(1.0, 3.0, 2.5),
-                 wfe_rms=50*u.nm,
+                 wfe_rms=None,
                  amp_params=(1.0, 3.0, 2.5),
-                 amp_rms=0,
+                 amp_rms=None,
                  amp_seed=None,
                  wfe_seed=None,
                  **kwargs):
@@ -517,7 +518,12 @@ class ABCPSDWFE(poppy.WavefrontError):
             for a temporary Wavefront used to compute the OPD.
         """
         if (self.opd is None): #or (wave.pixelscale != self.pixelscale):
-            self.opd = get_abc_psd_wavefront(wave, self.wfe_params, self.wfe_rms.to(u.meter).value, seed=self.amp_seed)
+            if self.wfe_rms is not None:
+                rms = self.wfe_rms.to(u.meter).value
+            else:
+                rms = None
+            self.opd, a = get_abc_psd_wavefront(wave, self.wfe_params, rms=rms, seed=self.amp_seed, return_a=True)
+            #self.wfe_params[0] = a # updated a from RMS
             self.pixelscale = wave.pixelscale
             self._shape = self.opd.shape
         return self.opd
@@ -525,16 +531,27 @@ class ABCPSDWFE(poppy.WavefrontError):
     @wfe._check_wavefront_arg
     def get_transmission(self, wave):
         if (self.amp is None): #or (wave.pixelscale != self.pixelscale):
-            amp = get_abc_psd_wavefront(wave, self.amp_params, self.amp_rms, seed=self.wfe_seed)
-            amp = 1 + amp # ABC PSD surface is centered at 0. This shifts to 1.
-            self.amp = amp
+            # generate a reflectivity PSD
+            if self.amp_rms is not None:
+                rms = self.amp_rms**2
+            else:
+                rms = None
+            refl, a = get_abc_psd_wavefront(wave, self.amp_params, rms=rms, seed=self.wfe_seed, return_a=True)
+            #self.amp_params[0] = a # updated a from RMS
+            refl = 1 + refl # ABC PSD surface is centered at 0. This shifts to 1.
+            # then convert to amplitude
+            self.amp = xp.sqrt(refl)
             self.pixelscale = wave.pixelscale
             self._shape = self.amp.shape
         return self.amp
 
-def get_abc_psd_wavefront(wave, abc, rms, seed=None):
+def get_abc_psd_wavefront(wave, abc, rms=None, force_rms=False, seed=None, return_a=False):
     """
     Given a poppy.Wavefront, generate a surface defined by an ABC PSD
+
+    If RMS is given, will force generated surface to the RMS value. Otherwise,
+    generated RMS will be determined by ABC parameters. See abc2rms
+    and rms2a functions.
     """
     # force to meters for consistency with (a,b,c) parameters
     f1 = xp.fft.fftfreq(wave.shape[0], d=wave.pixelscale.to(u.m/u.pix).value)
@@ -542,18 +559,76 @@ def get_abc_psd_wavefront(wave, abc, rms, seed=None):
     rho = xp.sqrt(y**2 + x**2) # radial spatial frequency
 
     a, b, c = abc
+
+    # if RMS is given, recompute ABC "a" parameter to match desired RMS
+    if rms is not None:
+        kmax = float(f1.max())
+        rmin = 0 
+        a = rms2a(rms,b,c,rmin=rmin,rmax=kmax, include_area=True)
+            
     psd = a / (1 + xp.power(rho/b, c))
+
+    #print(a, psd.max())
+    #print(xp.sqrt(xp.mean(psd)))
 
     psd_random_state = xp.random.RandomState()
     psd_random_state.seed(seed)   # if provided, set a seed for random number generator
-    rndm_phase = psd_random_state.normal(size=(len(y), len(x)))   # generate random phase screen
-    rndm_psd = xp.fft.fft2(xp.fft.fftshift(rndm_phase))   # FT of random phase screen to get random PSD
-    scaled = xp.sqrt(psd) * rndm_psd    # scale random PSD by power-law PSD
-    phase_screen = xp.fft.ifftshift(xp.fft.ifft2(scaled)).real   # FT of scaled random PSD makes phase screen
+    rndm_phase = psd_random_state.normal(scale=1, size=(len(y), len(x)))   # generate random phase screen
+    rndm_psd = xp.fft.fft2(xp.fft.fftshift(rndm_phase), norm='ortho')   # FT of random phase screen to get random PSD
+    scaled = xp.sqrt(psd) * rndm_psd   # scale random PSD by power-law PSD
+    phase_screen = xp.fft.ifftshift(xp.fft.ifft2(scaled, norm='ortho')).real   # FT of scaled random PSD makes phase screen
 
     phase_screen -= xp.mean(phase_screen)  # force zero-mean
-    phase_screen_normalized = phase_screen / xp.std(phase_screen) * rms  # normalize to wanted RMS
+    if force_rms and (rms is not None):
+        #print('normalizing!')
+        phase_screen_normalized = phase_screen / xp.std(phase_screen) * rms  # normalize to wanted RMS
+    else:
+        #print('not normalizing!')
+        phase_screen_normalized = phase_screen
+
+    phase_screen_normalized = phase_screen
+
+    if return_a:
+        return phase_screen_normalized, a
+
     return phase_screen_normalized
+
+def abc2rms(a,b,c,rmin=0,rmax=1, include_area=False):
+    """
+    Convert ABC PSD parameters to RMS
+
+    Parameters
+    -----------
+    TBD
+
+    Note that include_area=True is required to get the right normalization if
+    the PSD is being used to numerically generate a surface. It should be false
+    if this is just intended to get the analytic curve. Why? I don't know.
+
+    """
+    t2 = a*xp.pi*rmax**2 * hyp2f1(1, 2/c, (c+2)/c, -(rmax/b)**c)
+    t1 = a*xp.pi*rmin**2 * hyp2f1(1, 2/c, (c+2)/c, -(rmin/b)**c)
+    if include_area:
+        area = xp.pi * (rmax**2 - rmin**2) # annulus
+    else:
+        area = 1.0
+    return xp.sqrt( (t2 - t1) / area )
+
+def rms2a(rms,b,c,rmin=0,rmax=1, include_area=False):
+    """
+    Convert from RMS to a parameter in ABC PSD
+
+
+    See note in abc2rms about include_area argument.
+    """
+    t2 = xp.pi*rmax**2 * hyp2f1(1, 2/c, (c+2)/c, -(rmax/b)**c)
+    t1 = xp.pi*rmin**2 * hyp2f1(1, 2/c, (c+2)/c, -(rmin/b)**c)
+    if include_area:
+        area = xp.pi * (rmax**2 - rmin**2) # annulus
+    else:
+        area = 1.0
+    a = rms**2 * area / (t2 - t1)
+    return a
 
 def save_surfaces_and_reflectivities(model, outdir, orig_toml_path=None, overwrite=False):
     """

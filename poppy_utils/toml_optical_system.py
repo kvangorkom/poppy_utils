@@ -337,6 +337,19 @@ def load_optical_system_into_model(filename):
     osys, wf, systems_dict = load_optical_system(filename)
     return OpticalModel(osys, wavelength=wf.wavelength, wf0=wf, toml_dict=systems_dict)
 
+
+# def _run_on_cuda_gpu(gpu_idx=0):
+#     def decorator(func):
+#         def wrapper(*args, **kwargs):
+#             if poppy.accel_math._CUPY_AVAILABLE:
+#                 with poppy.accel_math.cp.cuda.Device(gpu_idx):
+#                     return func(*args, **kwargs)
+#             else:
+#                 return func(*args, **kwargs)
+#         return wrapper
+#     return decorator
+    
+
 class OpticalModel(object):
     """
     This is intended to be a lightweight wrapper around an
@@ -382,7 +395,7 @@ class OpticalModel(object):
         self.ttms = ttms
         self.ttms_idx = ttms_idx
         self.dms = dms
-
+        
     @poppy.utils.quantity_input(wavelength=u.meter)
     def run_mono(self, wf=None, wavelength=None, tiptilt=(0,0), return_intermediates=False, return_intensity=False):
         """
