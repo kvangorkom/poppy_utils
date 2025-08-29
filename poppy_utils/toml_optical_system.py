@@ -97,7 +97,7 @@ def parse_dict(tomldict):
             val[skey] = parse_dict(sval)
 
         # parse optic_type to poppy object
-        if skey in ['optic_type']: #'planetype'
+        if skey in ['optic_type', 'planetype']: #'planetype'
             val[skey] = parse_class_str(sval)
 
         # traverse lists to parse
@@ -273,11 +273,11 @@ def construct_optical_system(systems):
             if isinstance(osys, poppy.FresnelOpticalSystem):
                 osys.add_optic(compound_optic, distance=dz)
             elif isinstance(osys, poppy.OpticalSystem): # Fraunhofer systems need plane types
-                if planetype == 'pupil':
+                if planetype == poppy.optics.PlaneType.pupil:
                     osys.add_pupil(compound_optic)
-                elif planetype == 'image':
+                elif planetype == poppy.optics.PlaneType.image:
                     osys.add_image(compound_optic)
-                elif planetype == 'detector':
+                elif planetype == poppy.optics.PlaneType.detector:
                     osys.add_detector(compound_optic) # this will break
                     
         # special propagation requires a wrapper around a standard optical system
