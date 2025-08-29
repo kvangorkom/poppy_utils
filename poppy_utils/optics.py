@@ -267,6 +267,24 @@ class SimpleTipTiltStage(poppy.TipTiltStage):
         super().__init__(optic=optic, *args, **kwargs)
         self.name = name
 
+class ImperfectQWP(poppy.LinearPhaseRetarder):
+    """ Defines an imperfect quarter wave plate
+
+    Parameters
+    ----------
+    angle: float
+        Fast axis angle, in radians
+    retardance_error: float
+        Error in quarter-wave condition, given in radians.
+    name : string, optional
+        Descriptive name
+    """
+
+    def __init__(self, angle, retardance_error=0, name=None):
+        if name is None:
+            name = "Quarter wave plate"
+        super().__init__(np.pi/2 + retardance_error, angle, name=name)
+
 class FITSJonesOpticalElement(poppy.JonesMatrixOpticalElement):
     """
     Modification of FITSOpticalElement to handle Jones matrices
