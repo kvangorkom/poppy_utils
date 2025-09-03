@@ -42,6 +42,12 @@ def toml2dict(filename):
     systems_raw = tkdict['osys']
     
     wavefront = parse_dict(tkdict['wavefront'])
+
+    metadict = tkdict.get('metadata', None)
+    if metadict is not None:
+        metadata = parse_dict(metadict)
+    else:
+        metadata = None
     
     systems = []
     for osys in systems_raw:
@@ -65,7 +71,7 @@ def toml2dict(filename):
         }
         systems.append(osysdict)
 
-    return systems, wavefront
+    return systems, wavefront, metadata
 
 def parse_dict(tomldict):
     """
@@ -316,10 +322,10 @@ def load_optical_system(filename):
     --------
         poppy.FresnelOpticalSystem, poppy.Wavefront, parsed OrderedDict
     """
-    systems_dict, wavefront_dict = toml2dict(filename)
+    systems_dict, wavefront_dict, metadata = toml2dict(filename)
     osys = construct_optical_system(systems_dict)
     wf = construct_wavefront(wavefront_dict)
-    return osys, wf, systems_dict
+    return osys, wf, systems_dict, metadata
 
 def load_optical_system_into_model(filename):
     """
@@ -334,8 +340,8 @@ def load_optical_system_into_model(filename):
     --------
         OpticalModel
     """
-    osys, wf, systems_dict = load_optical_system(filename)
-    return OpticalModel(osys, wavelength=wf.wavelength, wf0=wf, toml_dict=systems_dict)
+    osys, wf, systems_dict, metadata = load_optical_system(filename)
+    return OpticalModel(osys, wavelength=wf.wavelength, wf0=wf, toml_dict=systems_dict, metadata=metadata)
 
 
 # def _run_on_cuda_gpu(gpu_idx=0):
@@ -362,7 +368,7 @@ class OpticalModel(object):
     * Partial propagation?
     """
 
-    def __init__(self, osys, wavelength=635*u.nm, wf0=None, toml_dict=None):
+    def __init__(self, osys, wavelength=635*u.nm, wf0=None, toml_dict=None, metadata=None):
         """
         sdf
         """
@@ -372,6 +378,8 @@ class OpticalModel(object):
 
         # if given, save the toml dict
         self.toml_dict = toml_dict
+
+        self.metadata = metadata
 
         # default input wavefront
         if wf0 is not None:
@@ -404,7 +412,7 @@ class OpticalModel(object):
         wf = deepcopy(self._wf0) if wf is None else deepcopy(wf)
 
         if wavelength is None: # not given, set to model default
-            wavelength = self.wavelength
+            wavelength = wf.wavelength
 
         # should we warn about this? It's kind of the whole point of the wavelength override
         #if wavelength != wf.wavelength:
