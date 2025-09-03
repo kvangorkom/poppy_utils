@@ -408,9 +408,9 @@ class MultiScaleCoronagraph(poppy.poppy_core.OpticalSystem):
             pupil_diam = wavefront.diam
         
         # taken from MFT Coronagraph
-        if self.wavelength is None:
+        #if self.wavelength is None:
             # set this once to avoid changing sampling when evaluating at other wavelengths (I think)
-            self.wavelength  = wavefront.wavelength
+        self.wavelength  = wavefront.wavelength
         metadet_pixelscale = ((self.wavelength / pupil_diam).decompose()
                               * u.radian).to(u.arcsec) / self.oversample / 2 / u.pixel
         self.fpm_highres = poppy.Detector(metadet_pixelscale, fov_arcsec=self.fpm_box * 2,
@@ -427,10 +427,10 @@ class MultiScaleCoronagraph(poppy.poppy_core.OpticalSystem):
         wavefront_lres.propagate_to(self.fpm) # This should be an FFT?
         wavefront_lres *= self.fpm # apply low res VVC
         # apply the window (create if not defined yet)
-        if self.window_lowres is None:
-            npix = xp.int64( wavefront_lres.shape[0] * (self.fpm_highres.fov_arcsec / wavefront_lres.fov) )
-            w1d = self.window_func(npix, alpha=1, sym=False)
-            self.window_lowres = 1 - pad_or_crop_to_shape(xp.outer(w1d, w1d), wavefront_lres.shape)
+        #if self.window_lowres is None:
+        npix = xp.int64( wavefront_lres.shape[0] * (self.fpm_highres.fov_arcsec / wavefront_lres.fov) )
+        w1d = self.window_func(npix, alpha=1, sym=False)
+        self.window_lowres = 1 - pad_or_crop_to_shape(xp.outer(w1d, w1d), wavefront_lres.shape)
         wavefront_lres.wavefront *= self.window_lowres
         wavefront_lres.propagate_to(self.pupil) # back to input pupil plane
         #return wavefront_lres
@@ -442,12 +442,15 @@ class MultiScaleCoronagraph(poppy.poppy_core.OpticalSystem):
         wavefront_hres.propagate_to(self.fpm_highres)  # This will be an MFT propagation
         wavefront_hres *= self.fpm # apply high res VVC
         # apply the window (create if not defined yet) -- might need to redefine every time
-        if self.window_highres is None:
-            w1d = self.window_func(wavefront_hres.shape[0], alpha=1, sym=False)
-            self.window_highres = xp.outer(w1d, w1d)
+        #if self.window_highres is None:
+        w1d = self.window_func(wavefront_hres.shape[0], alpha=1, sym=False)
+        self.window_highres = xp.outer(w1d, w1d)
         wavefront_hres.wavefront *= self.window_highres
         # propagate back to the wavefront_lres plane (which is the pupil, sampled appropriately)
         wavefront_hres._propagate_mft_inverse(wavefront_lres)#, pupil_npix=wavefront_lres.shape[0]) # back to input pupil plane
+
+        self.wavefront_lres = wavefront_lres
+        self.wavefront_hres = wavefront_hres
 
                 
         #return wavefront_hres
