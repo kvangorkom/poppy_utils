@@ -14,6 +14,7 @@ import re
 from collections import OrderedDict
 from copy import deepcopy
 from importlib import import_module
+import logging
 
 import astropy.units as u
 from astropy.io import fits
@@ -25,6 +26,8 @@ import numpy as np
 import tomlkit as tk
 
 from . import dm
+
+_log = logging.getLogger('poppy')
 
 
 def toml2dict(filename):
@@ -243,18 +246,25 @@ def construct_optical_system(systems):
 
         # then go optic-by-optic and build compound optics in order
         for optic in optics:
-
-            #print(f'loading {optic_name}...')
+        
             optic_name = optic['name']
+
+            _log.info(f'loading {optic_name}...')
 
             # treat as a compound optic
             is_compound = optic.get('is_compound', False)
             planetype = optic.get('planetype', None)
 
+            #if isinstance(optic_type, poppy.Detector): # detectors are unhappy if you give them a planetype
+            #    planetype = optic.pop('planetype', None)
+            #else:
+            #    planetype = optic.get('planetype', None)
+
             # is the distance a vertex-to-vertex distance? 
             #is_vertex_dz = optic.get('is_vertex_dz', 'False').upper() == 'TRUE'
             dz = optic.pop('dz', 0*u.m)
 
+            # parse the optic into a poppy optic
             if is_compound:
                 # construct compound optic out of each optic
                 opticslist = []
@@ -264,27 +274,33 @@ def construct_optical_system(systems):
                         if not isinstance(elem_dict, dict):
                             continue # skip non-dictionary entries (e.g., dz)
                         #print(f'loading {elem_name}')
-                        optic_type = elem_dict.pop('optic_type')
-                        cur_optic = optic_type(**elem_dict) # , name=f'{optic_name}_{elem_name}'
+                        #optic_type = elem_dict.pop('optic_type')
+                        #cur_optic = optic_type(**elem_dict) # , name=f'{optic_name}_{elem_name}'
+                        cur_optic = construct_poppy_optic(elem_dict)
                         opticslist.append(cur_optic)
                     compound_optic = poppy.CompoundAnalyticOptic(opticslist=opticslist, name=optic_name)
                 except Exception as e: # add info about optic being parsed to general errors
                     raise ValueError(f'Error while parsing optic {elem_name} in {optic_name}') from e
             else: # not compound
                 try:
-                    optic_type = optic.pop('optic_type')
-                    compound_optic = optic_type(**optic) # name=optic_name
+                    #optic_type = optic.pop('optic_type')
+                    #compound_optic = optic_type(**optic) # name=optic_name
+                    compound_optic = construct_poppy_optic(optic)
                 except Exception as e: # add info about optic being parsed to general errors
                     raise ValueError(f'Error while parsing optic {optic_name}') from e
+
+            # add the optic to the optical system    
             if isinstance(osys, poppy.FresnelOpticalSystem):
                 osys.add_optic(compound_optic, distance=dz)
             elif isinstance(osys, poppy.OpticalSystem): # Fraunhofer systems need plane types
+                #planetype = optic.pop('planetype', None)
                 if planetype == poppy.optics.PlaneType.pupil:
                     osys.add_pupil(compound_optic)
                 elif planetype == poppy.optics.PlaneType.image:
                     osys.add_image(compound_optic)
                 elif planetype == poppy.optics.PlaneType.detector:
-                    osys.add_detector(compound_optic) # this will break
+                    # this is a clumsy work-around because you can't add detectors as a detector object -- FIX ME
+                    osys.add_detector(compound_optic.pixelscale, fov_pixels=compound_optic.fov_pixels, oversample=compound_optic.oversample)
                     
         # special propagation requires a wrapper around a standard optical system
         if osys_wrapper is not None:
@@ -300,14 +316,37 @@ def construct_optical_system(systems):
 
     return osys_out
 
+
+def construct_poppy_optic(optic_dict):
+    """
+    Given a dictionary describing the optic, generate a realization
+    of the poppy optic and return it.
+
+    """
+    # get the poppy class
+    optic_type = optic_dict.pop('optic_type')
+
+    # detectors have a hard-coded planetype, but we need to pass it in for Fraunhofer
+    # systems so we add it to the right plane. Here, we pop it out of the dict so that
+    # we can instantiate the optic class without breaking
+    if issubclass(optic_type, poppy.Detector):
+        planetype = optic_dict.pop('planetype', None)
+
+    cur_optic = optic_type(**optic_dict)
+
+    return cur_optic
+
 def construct_wavefront(wf_dict):
     """
     TO DO
     """
     wf_dict = deepcopy(wf_dict)
     wf_constructor = wf_dict.pop('optic_type')
-    beam_radius = wf_dict.pop('beam_radius')
-    return wf_constructor(beam_radius, **wf_dict)
+    if isinstance(wf_constructor, poppy.FresnelWavefront):
+        beam_radius = wf_dict.pop('beam_radius')
+        return wf_constructor(beam_radius, **wf_dict)
+    else:
+        return wf_constructor(**wf_dict)
 
 def load_optical_system(filename):
     """
