@@ -166,7 +166,7 @@ class DeformableMirror(poppy.AnalyticOpticalElement):
         if self.include_reflection:
             opd *= 2
 
-        pxscl_diff = wave.pixelscale.to_value(u.m/u.pix) - self.pixelscale.to_value(u.m/u.pix) 
+        pxscl_diff = xp.abs(wave.pixelscale.to_value(u.m/u.pix) - self.pixelscale.to_value(u.m/u.pix))
         if pxscl_diff > self.pxscl_tol:
             opd = interp_arr(opd, self.pixelscale.to_value(u.m/u.pix), wave.pixelscale.to_value(u.m/u.pix) )
         
