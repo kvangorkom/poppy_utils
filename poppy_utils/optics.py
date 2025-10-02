@@ -56,7 +56,7 @@ def get_conic_parent_foci(roc, k):
     f1, f2 : tuple of floats
         Two foci (one may be infinity)
     """
-    eps = np.sqrt(-1*k)
+    eps = np.sqrt(np.abs(k))
 
     if k == -1: # avoid dividing by zero
         return roc/2, xp.inf
