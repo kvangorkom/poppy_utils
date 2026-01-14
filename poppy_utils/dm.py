@@ -61,8 +61,11 @@ def make_gaussian_inf_fun(act_spacing=300e-6*u.m, sampling=10, coupling=0.15, Na
     """
     Lifted from Kian's code: https://github.com/uasal/stp-psf
 
+    Slight modification to add an actuator buffer on each side to avoid
+    wrapping across the boundaries of the array
+
     """
-    ng = int(sampling*Nact)
+    ng = int(sampling*(Nact+2)) # number of pixels across the entire array
     pxscl = act_spacing/(sampling*u.pix)
 
     xs = (xp.linspace(-ng/2,ng/2-1,ng)+1/2)*pxscl.to_value(u.m/u.pix)
