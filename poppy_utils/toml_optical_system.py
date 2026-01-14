@@ -330,7 +330,7 @@ def construct_poppy_optic(optic_dict):
     # systems so we add it to the right plane. Here, we pop it out of the dict so that
     # we can instantiate the optic class without breaking
     # (same with some analytic image plane optics)
-    if issubclass(optic_type, poppy.Detector) or issubclass(optic_type, poppy.optics.AnalyticImagePlaneElement): 
+    if issubclass(optic_type, poppy.Detector) or issubclass(optic_type, poppy.optics.AnalyticImagePlaneElement) or issubclass(optic_type, poppy.optics.MultiSegmentAperture): 
         planetype = optic_dict.pop('planetype', None)
 
     cur_optic = optic_type(**optic_dict)
