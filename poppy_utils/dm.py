@@ -148,13 +148,13 @@ class DeformableMirror(poppy.AnalyticOpticalElement):
         self._command = self.map_actuators_to_command(act_vector) # ensure you update the actuators if command is set
         self._actuators = act_vector
     
-    def map_command_to_actuators(self, command_values):
-        actuators = command_values.ravel()[self.dm_mask.ravel()]
+    def map_command_to_actuators(self, command_values, dm_msk = self.dm_mask):
+        actuators = command_values.ravel()[dm_msk.ravel()]
         return actuators
         
-    def map_actuators_to_command(self, act_vector):
+    def map_actuators_to_command(self, act_vector, dm_msk = self.dm_mask):
         command = xp.zeros((self.Nact, self.Nact))
-        command[self.dm_mask] = act_vector
+        command[dm_msk] = act_vector
         return command
     
     def get_surface(self):
