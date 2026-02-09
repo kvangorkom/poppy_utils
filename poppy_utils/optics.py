@@ -306,11 +306,18 @@ class FITSJonesOpticalElement(poppy.JonesMatrixOpticalElement):
         with fits.open(jones_file) as f:
             jones_cube = f[0].data
 
-        # contrast 2x2xYxX jones pupil (TO DO: check if Exy and Eyx are flipped)
+        # 2x2xYxX jones pupil (TO DO: check if Exy and Eyx are flipped)
         jones_matrix = xp.asarray(
             [[jones_cube[0] + 1j*jones_cube[1], # Exx_re + 1j*Exx_im
               jones_cube[2] + 1j*jones_cube[3]], # Exy_re + 1j*Exy_im 
              [jones_cube[4] + 1j*jones_cube[5], # Eyx_re + 1j*Eyx_im
+              jones_cube[6] + 1j*jones_cube[7]]] # Eyy_re + 1j*Eyy_im
+        )
+
+        jones_matrix = xp.asarray(
+            [[jones_cube[0] + 1j*jones_cube[1], # Exx_re + 1j*Exx_im
+              jones_cube[4] + 1j*jones_cube[5]], # Eyx_re + 1j*Eyx_im
+             [jones_cube[2] + 1j*jones_cube[3], # Exy_re + 1j*Exy_im 
               jones_cube[6] + 1j*jones_cube[7]]] # Eyy_re + 1j*Eyy_im
         )
 
@@ -446,6 +453,10 @@ class MultiScaleCoronagraph(poppy.poppy_core.OpticalSystem):
         w1d = self.window_func(wavefront_hres.shape[0], alpha=1, sym=False)
         self.window_highres = xp.outer(w1d, w1d)
         wavefront_hres.wavefront *= self.window_highres
+
+        if return_intermediates: # retain high-resolution WF for intermediate planes
+            intermediate_wfs.append(wavefront_hres.copy()) 
+            
         # propagate back to the wavefront_lres plane (which is the pupil, sampled appropriately)
         wavefront_hres._propagate_mft_inverse(wavefront_lres)#, pupil_npix=wavefront_lres.shape[0]) # back to input pupil plane
 
@@ -525,7 +536,7 @@ class ABCPSDWFE(poppy.WavefrontError):
         self.wfe_seed = wfe_seed
 
         self.opd = None
-        self.amp = None
+        self.amplitude = None
         self.pixelscale = None
 
     @wfe._check_wavefront_arg
@@ -551,7 +562,7 @@ class ABCPSDWFE(poppy.WavefrontError):
 
     @wfe._check_wavefront_arg
     def get_transmission(self, wave):
-        if (self.amp is None): #or (wave.pixelscale != self.pixelscale):
+        if (self.amplitude is None): #or (wave.pixelscale != self.pixelscale):
             # generate a reflectivity PSD
             if self.amp_rms is not None:
                 rms = self.amp_rms**2
@@ -561,10 +572,10 @@ class ABCPSDWFE(poppy.WavefrontError):
             #self.amp_params[0] = a # updated a from RMS
             refl = 1 + refl # ABC PSD surface is centered at 0. This shifts to 1.
             # then convert to amplitude
-            self.amp = xp.sqrt(refl)
+            self.amplitude = xp.sqrt(refl)
             self.pixelscale = wave.pixelscale
-            self._shape = self.amp.shape
-        return self.amp
+            self._shape = self.amplitude.shape
+        return self.amplitude
 
 def get_abc_psd_wavefront(wave, abc, rms=None, force_rms=False, seed=None, return_a=False):
     """
@@ -771,10 +782,80 @@ def save_surfaces_and_reflectivities(model, outdir, orig_toml_path=None, overwri
         with open(toml_path, 'w') as fp:
             tk.dump(tk_new, fp)
 
+def get_refractive_index_fused_silica(wave):
+    """
+    Refractive index of Fused Silica, from https://refractiveindex.info/?shelf=glass&book=fused_silica&page=Malitson
 
+    Parameters
+    -----------
+    wave : float
+        Wavelength in microns
 
+    Returns
+    -------
+    refractive index at wavelength wave
+    """
+    n=(1+0.6961663/(1-(0.0684043/wave)**2)+0.4079426/(1-(0.1162414/wave)**2)+0.8974794/(1-(9.896161/wave)**2))**.5
+    return n
 
+class WedgedWindow(poppy.AnalyticOpticalElement):
+    """
+    Get chromatic dispersion from wedged window.
+    """
+    
+    @utils.quantity_input(wedge_angle=u.rad, radius=u.m, clocking=u.rad, reference_wave=u.m)
+    def __init__(self, wedge_angle, radius, clocking=0, reference_wave=630*u.nm, refractive_func=get_refractive_index_fused_silica,  name=None, **kwargs):
+        """
 
+        Parameters
+        -----------
+        wedge_angle : float
+            Wedge angle in units convertible to radians.
+        radius : float
+            Radius of the optic, in units convertible to meters.
+        clocking : float
+            Clocking (rotation about optical axis) of the wedge, in units convertible to radians.
+        reference_wave : float 
+            Wavelength that defines the optical axis of the wedge deviation, i.e., chromatic deviations
+            will be defined with respect to the deviation at this wavelength (to avoid building an absolute tilt
+            into the model).
+        refractive_func : function
+            Function that accepts a wavelength (in microns) and returns the refractive index.
+        name : str
+            Name of the optic 
+        """
+        if name is None:
+            name = 'wedged window'
 
+        self.reference_wave = reference_wave
+        self.wedge_angle = wedge_angle
+        self.clocking = clocking
+        self.refractive_func = refractive_func
+        self.n_0 = refractive_func(self.reference_wave.to_value(u.micron))
+        self.radius = radius
 
+        # from clocking, distribute between tip/tilt
+        self.tip_coeff  = np.sin(self.clocking.to_value(u.radian))
+        self.tilt_coeff = np.cos(self.clocking.to_value(u.radian))
 
+        # follow TipTiltStage convention with a tilt optic to induce the tip/tilt
+        self.tilt_optic = poppy.ZernikeWFE(coefficients=[0,0,0], radius=radius)
+
+        super().__init__(name=name, **kwargs)
+
+    def get_opd(self, wave):
+
+        if isinstance(wave, poppy.optics.BaseWavefront):
+            wavelength = wave.wavelength
+        else:
+            wavelength = wave
+        
+        # calculate secondary dispersion
+        n_w = self.refractive_func(wavelength.to_value(u.micron))
+        disp = (n_w - self.n_0) * self.wedge_angle.to(u.rad)
+        
+        # turn into tip/tilt
+        self.tilt_optic.coefficients[1] = disp.to_value(u.radian) * self.radius * -1/2 * self.tip_coeff
+        self.tilt_optic.coefficients[2] = disp.to_value(u.radian) * self.radius * -1/2 * self.tilt_coeff
+
+        return self.tilt_optic.get_opd(wave)
