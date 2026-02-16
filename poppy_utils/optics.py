@@ -477,6 +477,54 @@ class MultiScaleCoronagraph(poppy.poppy_core.OpticalSystem):
             return wavefront, intermediate_wfs
         else:
             return wavefront
+        
+
+class ScalarVortexMask(poppy.AnalyticOpticalElement):
+    """
+    Scalar vortex coronagraph with option to include a Roddier dimple in the center.
+    The phase shift in this interior region is pi plus the baseline sawtooth phase pattern. 
+
+    Parameters
+    -----
+    charge : float
+        Indicates the number of phase wrappings from 0 to 2pi. 
+        An even, integer charge is ideal for perfect starlight suppression, typically charge=2, 4, or 6.
+    dimple_radius : float
+        Angular coefficient describing the size of the Roddier dimple in lambda/D. 
+    f_number : float
+        F/# defined as (focal length)/(diameter of entrance pupil).
+    svc_type : string
+        Specify the type of vortex pattern as either 'sawtooth' or 'cosine'.
+    """
+    def __init__(self, charge=6, dimple_radius=None, f_number=15, svc_type='sawtooth', name='Scalar Vortex'):
+        self.charge = charge
+        self.dimple_radius = dimple_radius
+        self.f_number = f_number
+        self.svc_type = svc_type
+        super(ScalarVortexMask, self).__init__(name=name, planetype=poppy.poppy_core.PlaneType.intermediate)
+
+    def get_opd(self, wave):
+        """
+        Compute the phase delay introduced by the vortex mask.
+        OPD is returned in meters.
+        """
+        y, x = wave.coordinates()
+        azimuthal_phase = self.charge*np.arctan2(y, x)
+        if self.svc_type == 'sawtooth':
+            relative_phase = np.mod(azimuthal_phase, 2*np.pi)
+        elif self.svc_type == 'cosine': 
+            relative_phase = np.real(np.exp(1j*azimuthal_phase))
+
+        if self.dimple_radius is not None:
+            r = np.sqrt(x**2 + y**2)
+            # Calculate the physical dimple size in meters and then strip the units
+            dimple_radius_m = (self.dimple_radius * wave.wavelength * self.f_number).to(u.meter).value
+            relative_phase[r < dimple_radius_m] += np.pi
+
+        opd = relative_phase/(2*np.pi)*wave.wavelength
+
+        return opd
+
 
 class ABCPSDWFE(poppy.WavefrontError):
     """

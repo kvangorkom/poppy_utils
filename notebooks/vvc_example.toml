@@ -21,7 +21,7 @@ radius = '0.03m'
 
 [[osys.optics]]
 name='OAP1'
-is_compound= true
+is_compound= 'True'
 dz='0.99437500000m'
 [[osys.optics.optics]]
 name = 'stop'
@@ -32,7 +32,7 @@ name = 'surface'
 optic_type = 'poppy_utils.ABCPSDWFE'
 amp_params = [1, 3, 2.5] # abc PSD
 wfe_params = [1, 3, 2.5] # abc PSD
-wfe_rms = 5.0
+wfe_rms = '5.0nm'
 amp_rms = 0.005
 
 # propagate back to pupil prior to FPM system
@@ -54,7 +54,7 @@ oversample=4
 optic_type = 'poppy_utils.MultiScaleCoronagraph'
 oversample = 24
 fpm_box = 60 # arcsec
-to_fpm = false # can't convert from Fraunhofer image to Fresnel
+to_fpm = 'False' # can't convert from Fraunhofer image to Fresnel
 
 [[osys.optics]] # not sure if this is quite right
 name = 'pupil'
@@ -93,7 +93,7 @@ k = -1
 
 [[osys.optics]]
 name = 'OAE'
-is_compound= true
+is_compound= 'True'
 dz='2.3923850234m' # OAP1 to OAE
 [[osys.optics.optics]]
 optic_type = 'poppy.CircularAperture'
@@ -103,7 +103,7 @@ name='stop'
 optic_type = 'poppy_utils.ABCPSDWFE'
 amp_params = [1, 3, 2.5] # abc PSD
 wfe_params = [1, 3, 2.5] # abc PSD
-wfe_rms = 5.0
+wfe_rms = '5.0nm'
 amp_rms = 0.005
 
 [[osys.optics]] # Fresnel optical systems don't behave if powered optics are members of CompoundAnalyticOptics
