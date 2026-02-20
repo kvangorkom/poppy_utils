@@ -496,13 +496,20 @@ class ScalarVortexMask(poppy.AnalyticOpticalElement):
     svc_type : string
         Specify the type of vortex pattern as either 'sawtooth' or 'cosine'.
     """
-    def __init__(self, charge=6, dimple_radius=None, f_number=15, svc_type='sawtooth', name='Scalar Vortex'):
+    # def __init__(self, charge=6, dimple_radius=None, f_number=15, svc_type='sawtooth', name='Scalar Vortex'):
+    def __init__(self, charge=6, dimple_radius=None, f_number=15, svc_type='sawtooth', name=None, **kwargs):
+        if name is None:
+            name = 'SVC'
         self.charge = charge
         self.dimple_radius = dimple_radius
         self.f_number = f_number
         self.svc_type = svc_type
-        super(ScalarVortexMask, self).__init__(name=name, planetype=poppy.poppy_core.PlaneType.intermediate)
+        print("SVC test0")
+        # super(ScalarVortexMask, self).__init__(name=name, planetype=poppy.poppy_core.PlaneType.intermediate)
+        # super(ScalarVortexMask, self).__init__(charge=charge, dimple_radius=dimple_radius, f_number=f_number, svc_type=svc_type, name=name, **kwargs)
+        super(ScalarVortexMask, self).__init__(name=name, shift_x=None, shift_y=None, rotation=None, inclination_x=None, inclination_y=None, **kwargs)
 
+    print("SVC test1")
     def get_opd(self, wave):
         """
         Compute the phase delay introduced by the vortex mask.
@@ -522,6 +529,7 @@ class ScalarVortexMask(poppy.AnalyticOpticalElement):
             relative_phase[r < dimple_radius_m] += np.pi
 
         opd = relative_phase/(2*np.pi)*wave.wavelength
+        print("SVC test2")
 
         return opd
 
