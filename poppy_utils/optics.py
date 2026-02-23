@@ -483,6 +483,7 @@ class ScalarVortexMask(poppy.AnalyticOpticalElement):
     """
     Scalar vortex coronagraph with option to include a Roddier dimple in the center.
     The phase shift in this interior region is pi plus the baseline sawtooth phase pattern. 
+    If using in Fraunhofer mode, make sure to specify plane type as "image". 
 
     Parameters
     -----
@@ -493,21 +494,22 @@ class ScalarVortexMask(poppy.AnalyticOpticalElement):
         Angular coefficient describing the size of the Roddier dimple in lambda/D. 
     f_number : float
         F/# defined as (focal length)/(diameter of entrance pupil).
+    pupil_diam : float
+        Pupil diameter, required to specify in Fraunhofer mode. 
     svc_type : string
         Specify the type of vortex pattern as either 'sawtooth' or 'cosine'.
     """
     # def __init__(self, charge=6, dimple_radius=None, f_number=15, svc_type='sawtooth', name='Scalar Vortex'):
-    def __init__(self, charge=6, dimple_radius=None, f_number=15, svc_type='sawtooth', name=None, **kwargs):
+    def __init__(self, charge=6, dimple_radius=None, f_number=15, pupil_diam=None, svc_type='sawtooth', name=None, **kwargs):
         if name is None:
             name = 'SVC'
         self.charge = charge
         self.dimple_radius = dimple_radius
         self.f_number = f_number
+        self.pupil_diam = pupil_diam
         self.svc_type = svc_type
         print("SVC test0")
-        # super(ScalarVortexMask, self).__init__(name=name, planetype=poppy.poppy_core.PlaneType.intermediate)
-        # super(ScalarVortexMask, self).__init__(charge=charge, dimple_radius=dimple_radius, f_number=f_number, svc_type=svc_type, name=name, **kwargs)
-        super(ScalarVortexMask, self).__init__(name=name, shift_x=None, shift_y=None, rotation=None, inclination_x=None, inclination_y=None, **kwargs)
+        super().__init__(name=name, **kwargs)
 
     print("SVC test1")
     def get_opd(self, wave):
@@ -516,22 +518,120 @@ class ScalarVortexMask(poppy.AnalyticOpticalElement):
         OPD is returned in meters.
         """
         y, x = wave.coordinates()
-        azimuthal_phase = self.charge*np.arctan2(y, x)
+        azimuthal_phase = self.charge*xp.arctan2(y, x)
+
+        is_angular = False
+        if hasattr(x, 'unit') and x.unit.is_equivalent(u.arcsec):
+            is_angular = True
+
         if self.svc_type == 'sawtooth':
-            relative_phase = np.mod(azimuthal_phase, 2*np.pi)
+            relative_phase = xp.mod(azimuthal_phase, 2*xp.pi)
         elif self.svc_type == 'cosine': 
-            relative_phase = np.real(np.exp(1j*azimuthal_phase))
+            relative_phase = xp.real(xp.exp(1j*azimuthal_phase))
+        # Check if wavelength has units, and assign them as meters if not 
+        wl_m = wave.wavelength.to_value(u.meter) if hasattr(wave.wavelength, 'unit') else wave.wavelength
 
         if self.dimple_radius is not None:
-            r = np.sqrt(x**2 + y**2)
-            # Calculate the physical dimple size in meters and then strip the units
-            dimple_radius_m = (self.dimple_radius * wave.wavelength * self.f_number).to(u.meter).value
-            relative_phase[r < dimple_radius_m] += np.pi
+            r = xp.sqrt(x**2 + y**2)
+            # Make a unitless dimple_coeff from the specified dimple_radius
+            dimple_coef = self.dimple_radius.value if hasattr(self.dimple_radius, 'unit') else self.dimple_radius
 
-        opd = relative_phase/(2*np.pi)*wave.wavelength
-        print("SVC test2")
+            if is_angular:
+                # Fraunhofer mode works in angles (arcsec)
+                # If units were specified for the input pupil_diam, make sure they are in meters
+                D_m = self.pupil_diam.to_value(u.meter) if hasattr(self.pupil_diam, 'unit') else self.pupil_diam
+                dimple_threshold = ((dimple_coef * wl_m / D_m) * u.radian).to_value(u.arcsec)
+            else:
+                # Fresnel mode works directly in meters
+                dimple_threshold =  (dimple_coef * wl_m * self.f_number)
+
+            relative_phase[r < dimple_threshold] += xp.pi
+
+        # opd = relative_phase/(2*xp.pi)*wave.wavelength
+        opd = relative_phase / (2 * xp.pi) * wl_m
 
         return opd
+
+
+# class ScalarVortexMask(poppy.AnalyticOpticalElement):
+#     """
+#     Scalar vortex coronagraph with option to include a Roddier dimple.
+#     Calculates in arcseconds for Fraunhofer mode, and meters for Fresnel mode.
+#     """
+#     def __init__(self, charge=6, dimple_radius=None, f_number=15, pupil_diam=None, svc_type='sawtooth', name=None, **kwargs):
+#         if name is None:
+#             name = 'SVC'
+#         self.charge = charge
+#         self.dimple_radius = dimple_radius
+#         self.f_number = f_number
+#         self.pupil_diam = pupil_diam  # Required if using Fraunhofer!
+#         self.svc_type = svc_type
+        
+#         # Explicitly tell POPPY this is a focal plane mask
+#         if 'planetype' not in kwargs:
+#             kwargs['planetype'] = poppy.poppy_core.PlaneType.image
+            
+#         # super().__init__(name=name, **kwargs)
+#         for key in ['shift_x', 'shift_y', 'inclination_x', 'inclination_y']:
+#             if key in kwargs and hasattr(kwargs[key], 'unit') and kwargs[key].unit.is_equivalent(u.arcsec):
+#                 kwargs[key] = None 
+                
+#         # Now pass the clean kwargs up to the base class
+#         super().__init__(name=name, **kwargs)
+#         # super().__init__(name=name, shift_x=None, shift_y=None, **kwargs)
+
+#     def get_opd(self, wave):
+#         # xp = wave.xp 
+#         y, x = wave.coordinates()
+        
+#         # 1. Determine if the plane is Angular (Fraunhofer) or Physical (Fresnel)
+#         is_angular = False
+#         if hasattr(x, 'unit') and x.unit.is_equivalent(u.arcsec):
+#             is_angular = True
+
+#         # 2. Strip units from coordinates 
+#         if hasattr(x, 'unit'):
+#             # Standardize to ARCSECONDS for angles, meters for lengths
+#             x_val = x.to_value(u.arcsec) if is_angular else x.to_value(u.meter)
+#             y_val = y.to_value(u.arcsec) if is_angular else y.to_value(u.meter)
+#         else:
+#             x_val, y_val = x, y
+
+#         # arctan2 works correctly regardless of unit scale (arcsec or meters)
+#         azimuthal_phase = self.charge * xp.arctan2(y_val, x_val)
+        
+#         if self.svc_type == 'sawtooth':
+#             relative_phase = xp.mod(azimuthal_phase, 2 * xp.pi)
+#         elif self.svc_type == 'cosine': 
+#             relative_phase = xp.real(xp.exp(1j * azimuthal_phase))
+
+#         # 3. Calculate the dimple mask threshold
+#         if self.dimple_radius is not None:
+#             r_val = xp.sqrt(x_val**2 + y_val**2)
+            
+#             # Strip wavelength and dimple radius units safely
+#             wl_m = wave.wavelength.to_value(u.meter) if hasattr(wave.wavelength, 'unit') else wave.wavelength
+#             dimple_coef = self.dimple_radius.value if hasattr(self.dimple_radius, 'unit') else self.dimple_radius
+
+#             if is_angular:
+#                 # FRAUNHOFER (Angles): Calculate lambda/D in radians, then convert to arcsec
+#                 if self.pupil_diam is None:
+#                     raise ValueError("pupil_diam must be provided to ScalarVortexMask to calculate lambda/D in a Fraunhofer propagation.")
+                
+#                 D_m = self.pupil_diam.to_value(u.meter) if hasattr(self.pupil_diam, 'unit') else self.pupil_diam
+                
+#                 # Math: lambda/D gives radians. Use Astropy to convert to arcseconds cleanly.
+#                 dimple_threshold_rad = dimple_coef * (wl_m / D_m)
+#                 dimple_threshold = (dimple_threshold_rad * u.radian).to_value(u.arcsec)
+#             else:
+#                 # FRESNEL (Lengths): Threshold is directly in meters
+#                 dimple_threshold = dimple_coef * wl_m * self.f_number 
+                
+#             # Apply the Roddier dimple phase shift
+#             relative_phase[r_val < dimple_threshold] += xp.pi
+
+#         opd = relative_phase / (2 * xp.pi) * wl_m
+#         return opd
 
 
 class ABCPSDWFE(poppy.WavefrontError):
