@@ -264,6 +264,9 @@ def construct_optical_system(systems):
             #is_vertex_dz = optic.get('is_vertex_dz', 'False').upper() == 'TRUE'
             dz = optic.pop('dz', 0*u.m)
 
+            # rigid body motions
+            rbm = optic.pop('rigid_body', None)
+
             # parse the optic into a poppy optic
             if is_compound:
                 # construct compound optic out of each optic
@@ -291,7 +294,10 @@ def construct_optical_system(systems):
 
             # add the optic to the optical system    
             if isinstance(osys, poppy.FresnelOpticalSystem):
-                osys.add_optic(compound_optic, distance=dz)
+                if rbm is None: # no rigid body motion
+                    osys.add_optic(compound_optic, distance=dz)
+                else:
+                    osys.add_optic(compound_optic, distance=dz, rigid_body_motions=rbm)
             elif isinstance(osys, poppy.OpticalSystem): # Fraunhofer systems need plane types
                 #planetype = optic.pop('planetype', None)
                 if planetype == poppy.optics.PlaneType.pupil:
@@ -472,12 +478,15 @@ class OpticalModel(object):
             else:
                 return wf_out.intensity
 
-    def run_broadband(self, cenwave, bw, nwaves=20, **kwargs):
+    def run_broadband(self, bw, cenwave=None, nwaves=20, **kwargs):
         """
         Wrapper around run_mono
 
         Input = cenwave, bw, and num_waves? or just do list of wavelengths?
         """
+        if cenwave is None:
+            cenwave = self._wf0.wavelength
+            
         wavelens = np.linspace(cenwave*(1-bw/2.0), cenwave*(1+bw/2.0), num=nwaves)
 
         out = []

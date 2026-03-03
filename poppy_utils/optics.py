@@ -10,7 +10,7 @@ from scipy.special import hyp2f1
 
 import poppy
 from poppy import utils, wfe
-from poppy.accel_math import xp
+from poppy.accel_math import xp, _scipy
 from poppy.wfe import _wave_y_x_to_rho_theta
 from poppy.utils import _log, pad_or_crop_to_shape
 
@@ -577,6 +577,60 @@ class ABCPSDWFE(poppy.WavefrontError):
             self._shape = self.amplitude.shape
         return self.amplitude
 
+class DoubleABCPSDWFE(poppy.WavefrontError):
+    """
+    Optic with wavefront and reflectivity errors defined
+    as the sum of two ABC PSDs. See ABCPSDWFE documentation
+    for details
+
+    """
+
+    def __init__(self, name='Double ABC PSD WFE',
+                 wfe_params1=(1.0, 3.0, 2.5),
+                 wfe_rms1=None,
+                 wfe_params2=(1.0, 3.0, 2.5),
+                 wfe_rms2=None,
+                 amp_params=(1.0, 3.0, 2.5),
+                 amp_rms=None,
+                 **kwargs):
+
+        super().__init__(name=name, **kwargs)
+            
+        # first optic has both surface and reflectivity errors
+        self.abc_optic_1 = ABCPSDWFE(
+                 wfe_params=wfe_params1,
+                 wfe_rms=wfe_rms1,
+                 amp_params=amp_params,
+                 amp_rms=amp_rms
+                 )
+        # second optic has just surface errors
+        self.abc_optic_2 = ABCPSDWFE(
+                 wfe_params=wfe_params2,
+                 wfe_rms=wfe_rms2,
+                 amp_params=amp_params,
+                 amp_rms=0
+                 )
+
+        self.opd = None
+        self.amplitude = None
+        self.pixelscale = None
+
+    @wfe._check_wavefront_arg
+    def get_transmission(self, wave):
+        if self.amplitude is None:
+            self.amplitude = self.abc_optic_1.get_transmission(wave)
+            self.pixelscale = wave.pixelscale
+            self._shape = self.amplitude.shape
+        return self.amplitude
+
+    @wfe._check_wavefront_arg
+    def get_opd(self, wave):
+        if self.opd is None:
+            self.opd = self.abc_optic_1.get_opd(wave) + self.abc_optic_2.get_opd(wave)
+            self.pixelscale = wave.pixelscale
+            self._shape = self.amplitude.shape
+        return self.opd
+
 def get_abc_psd_wavefront(wave, abc, rms=None, force_rms=False, seed=None, return_a=False):
     """
     Given a poppy.Wavefront, generate a surface defined by an ABC PSD
@@ -595,8 +649,8 @@ def get_abc_psd_wavefront(wave, abc, rms=None, force_rms=False, seed=None, retur
     # if RMS is given, recompute ABC "a" parameter to match desired RMS
     if rms is not None:
         kmax = float(f1.max())
-        rmin = 0 
-        a = rms2a(rms,b,c,rmin=rmin,rmax=kmax, include_area=True)
+        kmin = float(f1[1]) 
+        a = rms2a(rms,b,c,rmin=kmin,rmax=kmax, include_area=True)
             
     psd = a / (1 + xp.power(rho/b, c))
 
@@ -834,10 +888,6 @@ class WedgedWindow(poppy.AnalyticOpticalElement):
         self.n_0 = refractive_func(self.reference_wave.to_value(u.micron))
         self.radius = radius
 
-        # from clocking, distribute between tip/tilt
-        self.tip_coeff  = np.sin(self.clocking.to_value(u.radian))
-        self.tilt_coeff = np.cos(self.clocking.to_value(u.radian))
-
         # follow TipTiltStage convention with a tilt optic to induce the tip/tilt
         self.tilt_optic = poppy.ZernikeWFE(coefficients=[0,0,0], radius=radius)
 
@@ -853,9 +903,187 @@ class WedgedWindow(poppy.AnalyticOpticalElement):
         # calculate secondary dispersion
         n_w = self.refractive_func(wavelength.to_value(u.micron))
         disp = (n_w - self.n_0) * self.wedge_angle.to(u.rad)
+
+        # from clocking, distribute between tip/tilt
+        self.tip_coeff  = np.sin(self.clocking.to_value(u.radian))
+        self.tilt_coeff = np.cos(self.clocking.to_value(u.radian))
         
         # turn into tip/tilt
         self.tilt_optic.coefficients[1] = disp.to_value(u.radian) * self.radius * -1/2 * self.tip_coeff
         self.tilt_optic.coefficients[2] = disp.to_value(u.radian) * self.radius * -1/2 * self.tilt_coeff
 
         return self.tilt_optic.get_opd(wave)
+
+
+class DynamicFresnelOpticalSystem(poppy.FresnelOpticalSystem):
+    """
+    Subclass of FresnelOpticalSystem that supports dynamic rigid body
+    motion of individual optical elements (dynamic in that sense that
+    unique realizations of translation/rotation can be supplied each
+    time propagation is performed).
+
+    If optics have a rigid_body_motion attribute, then rigid body motion is 
+    applied when the wavefront interacts with that optic. This is handled in 
+    practice by slightly tweaking the way multiplication between a Wavefront 
+    and an Optic is handled.
+
+    Tip/tilt is handled by calling Wavefront.tilt after interacting with the optic.
+
+    Translation is handled by calling _scipy.ndimage.shift to the optic phasor prior to
+    multiplying with Wavefront.wavefront.
+
+    optic.rigid_body_motion is expected to be a list-like in the form (x, y, theta_x, theta_y).
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.rigid_body_motions = []
+
+    @u.quantity_input(distance=u.m)
+    def add_optic(self, optic=None, distance=0.0 * u.m, index=None, rigid_body_motions=None):
+        """ Add an optic to the optical system
+
+        Parameters
+        ----------
+        optic : OpticalElement instance
+            Some optic
+        distance : astropy.Quantity of dimension length
+            separation distance of this optic relative to the prior optic in the system.
+        index : int
+            Index at which to insert the new optical element
+        rigid_body_motions : list
+            List of rigid body values, defined as [x, y, theta_x, theta_y]. Translations should be
+            in units convertible to meters, and angles should be in units convertible to radians.
+
+        """
+        # call parent
+        optic = super().add_optic(optic=optic, distance=distance, index=index)
+
+        # append rigid body motions
+        if rigid_body_motions is None:
+            rigid_body_motions = [
+                0 * u.m, # x translation
+                0 * u.m, # y translation
+                0 * u.rad, # tip (rotation about x)
+                0 * u.rad # tilt (rotation about y)
+            ]
+        
+        if index is None:
+            # Optic is appended to the end of the system
+            self.rigid_body_motions.append(rigid_body_motions)
+        else:
+            # Insert the optic into the middle of the beam train somewhere
+            self.rigid_body_motions.insert(index, rigid_body_motions)
+            
+        return optic
+
+
+    def propagate(self,
+                  wavefront,
+                  normalize='none',
+                  return_intermediates=False,
+                  display_intermediates=False):
+        """
+
+        Small modification to FresnelOpticalSystem.propagate
+        to handle rigid body motion.
+
+        """
+        intermediate_wfs = []
+
+        for optic, distance, rigid_body in zip(self.planes, self.distances, self.rigid_body_motions):
+
+            if poppy.conf.enable_speed_tests:  # pragma: no cover
+                s0 = time.time()
+
+            # get rigid body terms
+            x, y, theta_x , theta_y = rigid_body
+            # force translations to meters if no units are given
+            if not isinstance(x, u.Quantity):
+                x = x * u.m
+            if not isinstance(y, u.Quantity):
+                y = y * u.m
+
+            # The actual propagation to the optic plane
+            wavefront.propagate_to(optic, distance)
+            
+            # monkeypatch optic.get_phasor so that a translated phasor is generated
+            # when super().__imul__ is called
+            if (x != 0) or (y != 0):
+                get_phasor_orig = deepcopy(optic.get_phasor)
+                def get_phasor_shifted(optic):
+                    phasor = get_phasor_orig(wavefront)
+                    # shift
+                    x_pix = -(x / wavefront.pixelscale).to_value(u.pix)
+                    y_pix = -(y / wavefront.pixelscale).to_value(u.pix)
+
+                    # phasor may have one or two extra axes for polarization
+                    shift = xp.zeros(phasor.ndim, dtype=float)
+                    shift[-2] = y_pix
+                    shift[-1] = x_pix
+
+                    phasor_shifted = _scipy.ndimage.shift(phasor, shift)
+                    return phasor_shifted
+
+                optic.get_phasor = get_phasor_shifted
+ 
+            wavefront *= optic # this implicitly calls get_phasor_shifted  
+
+            # restore original get_phasor method
+            if (x != 0) or (y != 0):
+                optic.get_phasor = get_phasor_orig
+
+            # apply the tilt from the rigid body motion
+            if (theta_x != 0) or (theta_y != 0):
+                wavefront.tilt(Xangle=theta_x, Yangle=theta_y)
+
+            # --- everything else is copy-paste of the usual propagate method ---
+
+            # Normalize if appropriate:
+            if normalize.lower() == 'first' and wavefront.current_plane_index == 1:  # set entrance plane to 1.
+                wavefront.normalize()
+                _log.debug("normalizing at first plane (entrance pupil) to 1.0 total intensity")
+            elif normalize.lower() == 'first=2' and wavefront.current_plane_index == 1:
+                # this undocumented option is present only for testing/validation purposes
+                wavefront.normalize()
+                wavefront *= np.sqrt(2)
+            elif normalize.lower() == 'exit_pupil':  # normalize the last pupil in the system to 1
+                last_pupil_plane_index = np.where(
+                    np.asarray([p.planetype is PlaneType.pupil for p in self.planes]))[0].max() + 1
+                if wavefront.current_plane_index == last_pupil_plane_index:
+                    wavefront.normalize()
+                    _log.debug(
+                        "normalizing at exit pupil (plane {0}) to 1.0 total intensity".format(wavefront.current_plane_index))
+            elif normalize.lower() == 'last' and wavefront.current_plane_index == len(self.planes):
+                wavefront.normalize()
+                _log.debug("normalizing at last plane to 1.0 total intensity")
+
+            # Optional outputs:
+            if poppy.conf.enable_flux_tests:
+                _log.debug("  Flux === " + str(wavefront.total_intensity))
+
+            if return_intermediates:  # save intermediate wavefront, summed for polychromatic if needed
+                intermediate_wfs.append(wavefront.copy())
+
+            if poppy.conf.enable_speed_tests:  # pragma: no cover
+                s1 = time.time()
+                _log.debug(f"\tTIME {s1-s0:.4f} s\t for propagating past optic '{optic.name}'.")
+
+            if display_intermediates:
+                if poppy.conf.enable_speed_tests:  # pragma: no cover
+                    t0 = time.time()
+
+                wavefront._display_after_optic(optic)
+
+                if poppy.conf.enable_speed_tests:  # pragma: no cover
+                    t1 = time.time()
+                    _log.debug("\tTIME %f s\t for displaying the wavefront." % (t1 - t0))
+
+        if poppy.conf.enable_speed_tests: # pragma: no cover
+            t_stop = time.time()
+            _log.debug("\tTIME %f s\tfor propagating one wavelength" % (t_stop - t_start))
+
+        if return_intermediates:
+            return wavefront, intermediate_wfs
+        else:
+            return wavefront
