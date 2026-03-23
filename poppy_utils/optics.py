@@ -491,62 +491,74 @@ class ScalarVortexMask(poppy.AnalyticOpticalElement):
         Indicates the number of phase wrappings from 0 to 2pi. 
         An even, integer charge is ideal for perfect starlight suppression, typically charge=2, 4, or 6.
     dimple_radius : float
-        Angular coefficient describing the size of the Roddier dimple in lambda/D. 
+        Unitless coefficient describing the angular size of the Roddier dimple radius in lambda/D. 
     f_number : float
-        F/# defined as (focal length)/(diameter of entrance pupil).
-    pupil_diam : float
-        Pupil diameter, required to specify in Fraunhofer mode. 
+        F/# defined as (focal length)/(diameter of entrance pupil), only needed for Fresnel systems. 
+    ep_diam : astropy quantity
+        Entrance pupil diameter, required to specify in Fraunhofer mode. 
+    design_wl : astropy quantity
+        Specify the design wavelength for which the SVC dimple is optimized. Make sure to include units of length. 
     svc_type : string
-        Specify the type of vortex pattern as either 'sawtooth' or 'cosine'.
+        Specify the type of vortex pattern as either 'sawtooth', 'cosine', or 'classic'.
+        'sawtooth' defines a periodic phase ramp from 0 to 2pi with discrete boundaries.
+        'cosine' defines a continuous, sinusoidal phase from 0 to 2pi.
+        'classic' defines a smooth phase ramp from 0 to charge*2pi with a single discontinuity. 
+
+    Returns the optical path difference (OPD) in meters. 
     """
-    # def __init__(self, charge=6, dimple_radius=None, f_number=15, svc_type='sawtooth', name='Scalar Vortex'):
-    def __init__(self, charge=6, dimple_radius=None, f_number=15, pupil_diam=None, svc_type='sawtooth', name=None, **kwargs):
+    def __init__(self, charge=6, dimple_radius=None, f_number=50, ep_diam=None, design_wl=None, svc_type='sawtooth', name=None, **kwargs):
         if name is None:
             name = 'SVC'
         self.charge = charge
         self.dimple_radius = dimple_radius
         self.f_number = f_number
-        self.pupil_diam = pupil_diam
+        self.ep_diam = ep_diam
+        self.design_wl = design_wl
         self.svc_type = svc_type
         super().__init__(name=name, **kwargs)
 
     def get_opd(self, wave):
-        """
-        Compute the phase delay introduced by the vortex mask.
-        OPD is returned in meters.
-        """
         y, x = wave.coordinates()
-        azimuthal_phase = self.charge*xp.arctan2(y, x)
+        azimuthal_phase = self.charge * xp.arctan2(y, x)
 
         is_angular = False
-        if hasattr(x, 'unit') and x.unit.is_equivalent(u.arcsec):
-            is_angular = True
+        if hasattr(wave, 'pixelscale') and hasattr(wave.pixelscale, 'unit'):
+            if wave.pixelscale.unit.is_equivalent(u.arcsec / u.pixel):
+                is_angular = True
 
         if self.svc_type == 'sawtooth':
             relative_phase = xp.mod(azimuthal_phase, 2*xp.pi)
         elif self.svc_type == 'cosine': 
-            relative_phase = xp.real(xp.exp(1j*azimuthal_phase))
-        # Check if wavelength has units, and assign them as meters if not 
-        wl_m = wave.wavelength.to_value(u.meter) if hasattr(wave.wavelength, 'unit') else wave.wavelength
+            relative_phase = (xp.real(xp.exp(1j*azimuthal_phase)) + 1) * xp.pi
+        elif self.svc_type == 'classic':
+            relative_phase = (xp.arctan2(y, x) + xp.pi) * self.charge
+        
+        if self.design_wl is None:
+            wl_m = wave.wavelength.to_value(u.meter)
+        else:
+            wl_m = self.design_wl.to_value(u.meter) if hasattr(self.design_wl, 'unit') else float(self.design_wl)
+        
+        opd = (relative_phase / (2 * xp.pi)) * wl_m
 
         if self.dimple_radius is not None:
             r = xp.sqrt(x**2 + y**2)
-            # Make a unitless dimple_coeff from the specified dimple_radius
-            dimple_coef = self.dimple_radius.value if hasattr(self.dimple_radius, 'unit') else self.dimple_radius
+            dimple_coef = self.dimple_radius.value if hasattr(self.dimple_radius, 'unit') else float(self.dimple_radius)
 
             if is_angular:
-                # Fraunhofer mode works in angles (arcsec)?
-                # If units were specified for the input pupil_diam, make sure they are in meters
-                D_m = self.pupil_diam.to_value(u.meter) if hasattr(self.pupil_diam, 'unit') else self.pupil_diam
+                # Fraunhofer mode works in angles (arcsec)
+                # Safely handle ep_diam if it is passed as a string
+                if isinstance(self.ep_diam, str):
+                    self.ep_diam = u.Quantity(self.ep_diam)
+                
+                D_m = self.ep_diam.to_value(u.meter) if hasattr(self.ep_diam, 'unit') else self.ep_diam
                 dimple_threshold = ((dimple_coef * wl_m / D_m) * u.radian).to_value(u.arcsec)
+
             else:
-                # Fresnel mode works directly in meters?
-                dimple_threshold =  (dimple_coef * wl_m * self.f_number)
+                # Fresnel mode works directly in meters
+                dimple_threshold = (dimple_coef * wl_m * self.f_number)
 
-            relative_phase[r < dimple_threshold] += xp.pi
-
-        # opd = relative_phase/(2*xp.pi)*wave.wavelength
-        opd = relative_phase / (2 * xp.pi) * wl_m
+            # Apply the Roddier dimple
+            opd[r < dimple_threshold] += (wl_m / 2.0) 
 
         return opd
 
