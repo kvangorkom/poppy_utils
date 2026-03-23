@@ -94,7 +94,16 @@ class DeformableMirror(poppy.AnalyticOpticalElement):
                  include_reflection=True,
                  planetype=poppy.poppy_core.PlaneType.intermediate,
                  name='DM',
+                 failure_type = 'none',
+                 strk_flty = 0*u.m,
+                 msk_flty = xp.zeros((34,34)),
+                 Nbad = 0,
                 ):
+
+        self.failure_type = failure_type
+        self.strk_flty = strk_flty
+        self.msk_flty = xp.zeros((Nact,Nact))
+        self.Nbad = xp.sum(self.msk_flty)
         
         self.inf_fun = inf_fun
         self.inf_sampling = inf_sampling
@@ -301,18 +310,23 @@ class FaultyQuantizedGaussianDeformableMirror(QuantizedGaussianDeformableMirror)
 
 
     def __init__(self, failure_type = 'none', msk_flty = None, Nbad = 0, strk_flty = 0*u.m, **kwargs):
+    
         
-        super().__init__(**kwargs)
-
         # check for arguments
         if failure_type == 'none':
             print("DM without any faulty actuators.")
+            Nact = kwargs.get('Nact', 34)  
+            msk_flty = xp.zeros((self.Nact,self.Nact))
+            Nbad = 0
+            strk_flty = 0*u.m
 
         elif failure_type == 'dead' and strk_flty is None:
             raise ValueError('Stroke to be set for dead actuators needed.')
 
-        if msk_flty is None and Nbad == 0:
+        if failure_type == 'dead' and msk_flty is None and Nbad == 0:
             raise ValueError('Either a mask of faulty actuators or the number of faulty actuators needed.')
+        
+        super().__init__(failure_type = failure_type, strk_flty = strk_flty, msk_flty = msk_flty, Nbad = Nbad, **kwargs)
 
         if msk_flty is None and Nbad != 0:
             print("Mask of bad actuators not given. Selecting %d random ones."%Nbad)
@@ -323,11 +337,11 @@ class FaultyQuantizedGaussianDeformableMirror(QuantizedGaussianDeformableMirror)
             flty_act_ind = xp.random.randint(low = 0, high = len(ind_il), size = Nbad)
             msk_flty[ind_il[flty_act_ind,0],ind_il[flty_act_ind,1]] = True
     
-
         self.failure_type = failure_type
         self.strk_flty = strk_flty
         self.msk_flty = msk_flty
-        self.Nbad = xp.sum(msk_flty)
+        if msk_flty is None: self.Nbad = 0 
+        else: self.Nbad = xp.sum(msk_flty)
     
     @property
     def command(self):
@@ -344,13 +358,16 @@ class FaultyQuantizedGaussianDeformableMirror(QuantizedGaussianDeformableMirror)
             # subtract the commands at the dead act positions
             command_values -= 1*(command_values*self.msk_flty) 
             # add the stroke for dead actuators
-            command_values += (self.msk_flty(self.strk_flty))
+            command_values += (self.msk_flty*self.strk_flty.to_value(u.m))
 
         # set the command and update actuators as well
         self._actuators = self.map_command_to_actuators(command_values) # ensure you update the actuators if command is set
         self._command = command_values
 
 
+    @property
+    def actuators(self):
+        return self._actuators
     @actuators.setter
     def actuators(self, act_vector):
 
@@ -360,7 +377,7 @@ class FaultyQuantizedGaussianDeformableMirror(QuantizedGaussianDeformableMirror)
             # subtract the commands at the dead act positions
             command_values -= 1*(command_values*self.msk_flty) 
             # add the stroke for dead actuators
-            command_values += (self.msk_flty(self.strk_flty))
+            command_values += (self.msk_flty*self.strk_flty.to_value(u.m))
 
             # update act vector to new values
             act_vector = self.map_command_to_actuators(command_values)
