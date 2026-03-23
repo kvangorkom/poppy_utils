@@ -351,21 +351,39 @@ def construct_wavefront(wf_dict):
 
 def load_optical_system(filename):
     """
-    Load a .toml file into a parsed dictionary
+    Load .toml file(s) into a parsed dictionary
 
     Parameters
     ----------
     filename : str
-        Filename of a .toml file
+        Filename of a .toml file or a list of filenames for .toml files for the telescope and instrument, respectively
 
     Returns
     --------
         poppy.FresnelOpticalSystem, poppy.Wavefront, parsed OrderedDict
     """
-    systems_dict, wavefront_dict, metadata = toml2dict(filename)
-    osys = construct_optical_system(systems_dict)
-    wf = construct_wavefront(wavefront_dict)
+    if len(filename) == 1:
+        systems_dict, wavefront_dict, metadata = toml2dict(filename)
+        osys = construct_optical_system(systems_dict)
+        wf = construct_wavefront(wavefront_dict)
+    
+    else:
+        filename_tel = filename[0]
+        filename_instr = filename[1]
+
+        systems_dict_tel, wavefront_dict_tel, metadata_tel = toml2dict(filename_tel)
+        systems_dict_instr, wavefront_dict_instr, metadata_instr = toml2dict(filename_instr)
+
+        systems_dict = systems_dict_tel + systems_dict_instr
+        wavefront_dict = wavefront_dict_tel | wavefront_dict_instr
+        metadata = metadata_tel | metadata_instr
+
+        osys = construct_optical_system(systems_dict)
+        wf = construct_wavefront(wavefront_dict)
+        
     return osys, wf, systems_dict, metadata
+
+    
 
 def load_optical_system_into_model(filename):
     """
