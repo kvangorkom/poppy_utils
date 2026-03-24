@@ -355,7 +355,7 @@ def load_optical_system(filename):
 
     Parameters
     ----------
-    filename : str
+    filename : list
         Filename of a .toml file or a list of filenames for .toml files for the telescope and instrument, respectively
 
     Returns
@@ -363,7 +363,7 @@ def load_optical_system(filename):
         poppy.FresnelOpticalSystem, poppy.Wavefront, parsed OrderedDict
     """
     if len(filename) == 1:
-        systems_dict, wavefront_dict, metadata = toml2dict(filename)
+        systems_dict, wavefront_dict, metadata = toml2dict(filename[0])
         osys = construct_optical_system(systems_dict)
         wf = construct_wavefront(wavefront_dict)
     
