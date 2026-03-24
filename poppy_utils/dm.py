@@ -94,17 +94,8 @@ class DeformableMirror(poppy.AnalyticOpticalElement):
                  include_reflection=True,
                  planetype=poppy.poppy_core.PlaneType.intermediate,
                  name='DM',
-                 failure_type = 'none',
-                 strk_flty = 0*u.m,
-                 msk_flty = xp.zeros((34,34)),
-                 Nbad = 0,
                 ):
-
-        self.failure_type = failure_type
-        self.strk_flty = strk_flty
-        self.msk_flty = xp.zeros((Nact,Nact))
-        self.Nbad = xp.sum(self.msk_flty)
-        
+       
         self.inf_fun = inf_fun
         self.inf_sampling = inf_sampling
 
@@ -158,13 +149,11 @@ class DeformableMirror(poppy.AnalyticOpticalElement):
         self._command = self.map_actuators_to_command(act_vector) # ensure you update the actuators if command is set
         self._actuators = act_vector
     
-    def map_command_to_actuators(self, command_values, dm_msk = None):
-        if dm_msk is None: dm_msk = self.dm_mask
+    def map_command_to_actuators(self, command_values):
         actuators = command_values.ravel()[dm_msk.ravel()]
         return actuators
         
-    def map_actuators_to_command(self, act_vector, dm_msk = None):
-        if dm_msk is None: dm_msk = self.dm_mask
+    def map_actuators_to_command(self, act_vector):
         command = xp.zeros((self.Nact, self.Nact))
         command[dm_msk == True] = act_vector
         return command
@@ -306,10 +295,18 @@ class FaultyQuantizedGaussianDeformableMirror(QuantizedGaussianDeformableMirror)
         where each element corresponds to the stroke of one of the faulty act. 
         This input is mandatory when failure_type = 'dead', not needed for 'float'.
     """
+    # failure_type = 'none'
+    # strk_flty = 0*u.m,
+    # msk_flty = xp.zeros((34,34)),
+    # Nbad = 0,
+    # self.failure_type = failure_type
+    # self.strk_flty = strk_flty
+    # self.msk_flty = xp.zeros((Nact,Nact))
+    # self.Nbad = xp.sum(self.msk_flty)
     @utils.quantity_input(strk_flty=u.meter)
 
 
-    def __init__(self, failure_type = 'none', msk_flty = None, Nbad = 0, strk_flty = 0*u.m, **kwargs):
+    def __init__(self, **kwargs):
     
         
         # check for arguments
@@ -326,7 +323,7 @@ class FaultyQuantizedGaussianDeformableMirror(QuantizedGaussianDeformableMirror)
         if failure_type == 'dead' and msk_flty is None and Nbad == 0:
             raise ValueError('Either a mask of faulty actuators or the number of faulty actuators needed.')
         
-        super().__init__(failure_type = failure_type, strk_flty = strk_flty, msk_flty = msk_flty, Nbad = Nbad, **kwargs)
+        super().__init__(**kwargs)
 
         if msk_flty is None and Nbad != 0:
             print("Mask of bad actuators not given. Selecting %d random ones."%Nbad)
@@ -337,11 +334,11 @@ class FaultyQuantizedGaussianDeformableMirror(QuantizedGaussianDeformableMirror)
             flty_act_ind = xp.random.randint(low = 0, high = len(ind_il), size = Nbad)
             msk_flty[ind_il[flty_act_ind,0],ind_il[flty_act_ind,1]] = True
     
-        self.failure_type = failure_type
-        self.strk_flty = strk_flty
-        self.msk_flty = msk_flty
-        if msk_flty is None: self.Nbad = 0 
-        else: self.Nbad = xp.sum(msk_flty)
+        # self.failure_type = failure_type
+        # self.strk_flty = strk_flty
+        # self.msk_flty = msk_flty
+        # if msk_flty is None: self.Nbad = 0 
+        # else: self.Nbad = xp.sum(msk_flty)
     
     @property
     def command(self):
@@ -384,3 +381,14 @@ class FaultyQuantizedGaussianDeformableMirror(QuantizedGaussianDeformableMirror)
 
         self._command = self.map_actuators_to_command(act_vector) # ensure you update the actuators if command is set
         self._actuators = act_vector
+
+    # def map_command_to_actuators(self, command_values, dm_msk = None):
+    #     if dm_msk is None: dm_msk = self.dm_mask
+    #     actuators = command_values.ravel()[dm_msk.ravel()]
+    #     return actuators
+        
+    # def map_actuators_to_command(self, act_vector, dm_msk = None):
+    #     if dm_msk is None: dm_msk = self.dm_mask
+    #     command = xp.zeros((self.Nact, self.Nact))
+    #     command[dm_msk == True] = act_vector
+    #     return command
