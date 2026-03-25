@@ -366,13 +366,13 @@ def load_optical_system(filename):
         systems_dict, wavefront_dict, metadata = toml2dict(filename)
     
     if isinstance(filename, list):
-        system_dict = []
+        systems_dict = []
         wavefront_dict = {}
         metadata = {}
         for ii in range(len(filename)):
             fn = filename[ii]
             sys_dict, wf_dict, md = toml2dict(fn)
-            system_dict = system_dict + sys_dict
+            systems_dict = systems_dict + sys_dict
             wavefront_dict = wavefront_dict | wf_dict
             metadata = metadata | md
     
