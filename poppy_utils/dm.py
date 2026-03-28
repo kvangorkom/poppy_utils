@@ -7,6 +7,7 @@ from poppy import utils
 from poppy.accel_math import xp, _scipy
 
 
+
 class QuantizedContinuousDeformableMirror(poppy.ContinuousDeformableMirror):
     """
     Lightweight wrapper around poppy.ContinuousDeformableMirror that supports
@@ -94,7 +95,7 @@ class DeformableMirror(poppy.AnalyticOpticalElement):
                  planetype=poppy.poppy_core.PlaneType.intermediate,
                  name='DM',
                 ):
-        
+       
         self.inf_fun = inf_fun
         self.inf_sampling = inf_sampling
 
@@ -272,3 +273,122 @@ def interp_arr(arr, pixelscale, new_pixelscale, order=1):
 
     interped_arr = _scipy.ndimage.map_coordinates(arr, coords, order=order)
     return interped_arr
+
+class FaultyQuantizedGaussianDeformableMirror(QuantizedGaussianDeformableMirror):
+    """
+    Wrapper around poppy.QuantizedGaussianDeformableMirror to include the effects of dead/floating actuators.
+
+    Parameters:
+    -----------
+    failure_type: string
+        Either "dead" or "float" or "none"
+
+    msk_flty: xp.array
+        Mask of faulty actuators -- set the bad actuators to True
+    
+    Nbad: int
+        Number of bad actuators - used to randomly generate a mask with Nbad act.
+        If given with msk_flty, msk_flty is used and this is ignored. 
+
+    strk_flty: float or xp.array
+        Either a single value that all the dead actuators will be forced to or an array of values
+        where each element corresponds to the stroke of one of the faulty act. 
+        This input is mandatory when failure_type = 'dead', not needed for 'float'.
+    """
+    # failure_type = 'none'
+    # strk_flty = 0*u.m,
+    # msk_flty = xp.zeros((34,34)),
+    # Nbad = 0,
+    # self.failure_type = failure_type
+    # self.strk_flty = strk_flty
+    # self.msk_flty = xp.zeros((Nact,Nact))
+    # self.Nbad = xp.sum(self.msk_flty)
+    @utils.quantity_input(strk_flty=u.meter)
+
+
+    def __init__(self, **kwargs):
+    
+        
+        # check for arguments
+        if failure_type == 'none':
+            print("DM without any faulty actuators.")
+            Nact = kwargs.get('Nact', 34)  
+            msk_flty = xp.zeros((self.Nact,self.Nact))
+            Nbad = 0
+            strk_flty = 0*u.m
+
+        elif failure_type == 'dead' and strk_flty is None:
+            raise ValueError('Stroke to be set for dead actuators needed.')
+
+        if failure_type == 'dead' and msk_flty is None and Nbad == 0:
+            raise ValueError('Either a mask of faulty actuators or the number of faulty actuators needed.')
+        
+        super().__init__(**kwargs)
+
+        if msk_flty is None and Nbad != 0:
+            print("Mask of bad actuators not given. Selecting %d random ones."%Nbad)
+            msk_flty = xp.zeros((self.Nact,self.Nact))
+            # find the indices of illuminated act
+            ind_il = xp.argwhere(self.dm_mask)
+            # Generate Nbad values from 0 to Nbad to get the act which are faulty and set them to True in the mask
+            flty_act_ind = xp.random.randint(low = 0, high = len(ind_il), size = Nbad)
+            msk_flty[ind_il[flty_act_ind,0],ind_il[flty_act_ind,1]] = True
+    
+        # self.failure_type = failure_type
+        # self.strk_flty = strk_flty
+        # self.msk_flty = msk_flty
+        # if msk_flty is None: self.Nbad = 0 
+        # else: self.Nbad = xp.sum(msk_flty)
+    
+    @property
+    def command(self):
+        return self._command
+
+    @command.setter
+    def command(self, command_values):
+
+        # desired command values
+        command_values *= self.dm_mask
+
+        # if actuators are dead, force them to given stroke value(s)
+        if self.failure_type == 'dead':
+            # subtract the commands at the dead act positions
+            command_values -= 1*(command_values*self.msk_flty) 
+            # add the stroke for dead actuators
+            command_values += (self.msk_flty*self.strk_flty.to_value(u.m))
+
+        # set the command and update actuators as well
+        self._actuators = self.map_command_to_actuators(command_values) # ensure you update the actuators if command is set
+        self._command = command_values
+
+
+    @property
+    def actuators(self):
+        return self._actuators
+    @actuators.setter
+    def actuators(self, act_vector):
+
+        # if actuators are dead, force them to given stroke value(s)
+        if self.failure_type == 'dead':
+            command_values = self.map_actuators_to_command(act_vector)
+            # subtract the commands at the dead act positions
+            command_values -= 1*(command_values*self.msk_flty) 
+            # add the stroke for dead actuators
+            command_values += (self.msk_flty*self.strk_flty.to_value(u.m))
+
+            # update act vector to new values
+            act_vector = self.map_command_to_actuators(command_values)
+
+        self._command = self.map_actuators_to_command(act_vector) # ensure you update the actuators if command is set
+        self._actuators = act_vector
+
+    # def map_command_to_actuators(self, command_values, dm_msk = None):
+    #     if dm_msk is None: dm_msk = self.dm_mask
+    #     actuators = command_values.ravel()[dm_msk.ravel()]
+    #     return actuators
+        
+    # def map_actuators_to_command(self, act_vector, dm_msk = None):
+    #     if dm_msk is None: dm_msk = self.dm_mask
+    #     command = xp.zeros((self.Nact, self.Nact))
+    #     command[dm_msk == True] = act_vector
+    #     return command
