@@ -18,6 +18,10 @@ tukey =  poppy.accel_math._scipy.signal.windows.tukey
 
 import tomlkit as tk
 
+import logging
+_log = logging.getLogger('poppy')
+
+
 def get_conic_sag(roc, k, r):
     """
     Get the sag for a given conic
@@ -508,7 +512,7 @@ class ABCPSDWFE(poppy.WavefrontError):
     name : string
         name of the optic
     psd_params: list of floats
-        (a,b,c) = (normalization (ignored in favor of wfe arg below), turnover in cycles/m, exponent)
+        (a,b,c) = (normalization (typically ignored in favor of RMS arg below), turnover in cycles/m, exponent)
     wfe: astropy quantity
         RMS wfe in linear astropy units, defaults to 50 nm
     radius: astropy quantity
@@ -525,6 +529,8 @@ class ABCPSDWFE(poppy.WavefrontError):
                  amp_rms=None,
                  amp_seed=None,
                  wfe_seed=None,
+                 force_wfe_rms=False,
+                 force_amp_rms=False,
                  **kwargs):
 
         super().__init__(name=name, **kwargs)
@@ -534,6 +540,9 @@ class ABCPSDWFE(poppy.WavefrontError):
         self.amp_rms = amp_rms
         self.amp_seed = amp_seed
         self.wfe_seed = wfe_seed
+        self.force_wfe_rms= force_wfe_rms
+        self.force_amp_rms= force_amp_rms
+
 
         self.opd = None
         self.amplitude = None
@@ -554,7 +563,8 @@ class ABCPSDWFE(poppy.WavefrontError):
                 rms = self.wfe_rms.to(u.meter).value
             else:
                 rms = None
-            self.opd, a = get_abc_psd_wavefront(wave, self.wfe_params, rms=rms, seed=self.amp_seed, return_a=True)
+            self.opd, a = get_abc_psd_wavefront(wave, self.wfe_params, rms=rms, seed=self.amp_seed,  force_rms=self.force_wfe_rms, return_a=True)
+            self.wfe_params[0] = a # update a from RMS
             #self.wfe_params[0] = a # updated a from RMS
             self.pixelscale = wave.pixelscale
             self._shape = self.opd.shape
@@ -568,8 +578,8 @@ class ABCPSDWFE(poppy.WavefrontError):
                 rms = self.amp_rms**2
             else:
                 rms = None
-            refl, a = get_abc_psd_wavefront(wave, self.amp_params, rms=rms, seed=self.wfe_seed, return_a=True)
-            #self.amp_params[0] = a # updated a from RMS
+            refl, a = get_abc_psd_wavefront(wave, self.amp_params, rms=rms, seed=self.wfe_seed, force_rms=self.force_amp_rms, return_a=True)
+            self.amp_params[0] = a # updated a from RMS
             refl = 1 + refl # ABC PSD surface is centered at 0. This shifts to 1.
             # then convert to amplitude
             self.amplitude = xp.sqrt(refl)
@@ -631,7 +641,7 @@ class DoubleABCPSDWFE(poppy.WavefrontError):
             self._shape = self.amplitude.shape
         return self.opd
 
-def get_abc_psd_wavefront(wave, abc, rms=None, force_rms=False, seed=None, return_a=False):
+def get_abc_psd_wavefront(wave, abc, rms=None, force_rms=False, seed=None, return_a=False, kmin=0, kmax=1e16):
     """
     Given a poppy.Wavefront, generate a surface defined by an ABC PSD
 
@@ -640,7 +650,8 @@ def get_abc_psd_wavefront(wave, abc, rms=None, force_rms=False, seed=None, retur
     and rms2a functions.
     """
     # force to meters for consistency with (a,b,c) parameters
-    f1 = xp.fft.fftfreq(wave.shape[0], d=wave.pixelscale.to(u.m/u.pix).value)
+    f1 = xp.fft.fftfreq(wave.shape[0], d=wave.pixelscale.to_value(u.m/u.pix))
+    dk = f1[1]
     y, x = xp.meshgrid(f1, f1)
     rho = xp.sqrt(y**2 + x**2) # radial spatial frequency
 
@@ -648,20 +659,24 @@ def get_abc_psd_wavefront(wave, abc, rms=None, force_rms=False, seed=None, retur
 
     # if RMS is given, recompute ABC "a" parameter to match desired RMS
     if rms is not None:
+        if c <= 2:
+            _log.warning('The integral under a radial ABC PSD with c<=2 does not converge. The conversion between RMS and parameter "a" will be highly sensitive to the bounds of the integral!')
         kmax = float(f1.max())
         kmin = float(f1[1]) 
-        a = rms2a(rms,b,c,rmin=kmin,rmax=kmax, include_area=True)
+        #a = rms2a(rms,b,c,rmin=kmin,rmax=kmax, include_area=False)
+        a = rms2a(rms,b,c,rmin=kmin,rmax=kmax, include_area=False)
+
+    area = (f1.max() - f1.min())**2
             
     psd = a / (1 + xp.power(rho/b, c))
 
-    #print(a, psd.max())
-    #print(xp.sqrt(xp.mean(psd)))
 
     psd_random_state = xp.random.RandomState()
     psd_random_state.seed(seed)   # if provided, set a seed for random number generator
     rndm_phase = psd_random_state.normal(scale=1, size=(len(y), len(x)))   # generate random phase screen
     rndm_psd = xp.fft.fft2(xp.fft.fftshift(rndm_phase), norm='ortho')   # FT of random phase screen to get random PSD
-    scaled = xp.sqrt(psd) * rndm_psd   # scale random PSD by power-law PSD
+    #rndm_psd = xp.exp(1j*psd_random_state.uniform(low=0,high=2*xp.pi, size=(len(y), len(x))))
+    scaled = xp.sqrt(psd * area) * rndm_psd  # scale random PSD by power-law PSD
     phase_screen = xp.fft.ifftshift(xp.fft.ifft2(scaled, norm='ortho')).real   # FT of scaled random PSD makes phase screen
 
     phase_screen -= xp.mean(phase_screen)  # force zero-mean
@@ -952,7 +967,7 @@ class DynamicFresnelOpticalSystem(poppy.FresnelOpticalSystem):
         index : int
             Index at which to insert the new optical element
         rigid_body_motions : list
-            List of rigid body values, defined as [x, y, theta_x, theta_y]. Translations should be
+            List of rigid body values, defined as [x, y, z, theta_x, theta_y]. Translations should be
             in units convertible to meters, and angles should be in units convertible to radians.
 
         """
@@ -964,8 +979,10 @@ class DynamicFresnelOpticalSystem(poppy.FresnelOpticalSystem):
             rigid_body_motions = [
                 0 * u.m, # x translation
                 0 * u.m, # y translation
+                0 * u.m, # z translation (added to distance value as a delta)
                 0 * u.rad, # tip (rotation about x)
-                0 * u.rad # tilt (rotation about y)
+                0 * u.rad, # tilt (rotation about y)
+                0 * u.rad # clocking (rotation about z)
             ]
         
         if index is None:
@@ -997,19 +1014,21 @@ class DynamicFresnelOpticalSystem(poppy.FresnelOpticalSystem):
                 s0 = time.time()
 
             # get rigid body terms
-            x, y, theta_x , theta_y = rigid_body
+            x, y, z, theta_x , theta_y, theta_z = rigid_body
             # force translations to meters if no units are given
             if not isinstance(x, u.Quantity):
                 x = x * u.m
             if not isinstance(y, u.Quantity):
                 y = y * u.m
+            if not isinstance(theta_z, u.Quantity):
+                theta_z = theta_z * u.rad
 
             # The actual propagation to the optic plane
-            wavefront.propagate_to(optic, distance)
+            wavefront.propagate_to(optic, distance + z)
             
             # monkeypatch optic.get_phasor so that a translated phasor is generated
             # when super().__imul__ is called
-            if (x != 0) or (y != 0):
+            if (x != 0) or (y != 0) or (theta_z != 0):
                 get_phasor_orig = deepcopy(optic.get_phasor)
                 def get_phasor_shifted(optic):
                     phasor = get_phasor_orig(wavefront)
@@ -1022,6 +1041,9 @@ class DynamicFresnelOpticalSystem(poppy.FresnelOpticalSystem):
                     shift[-2] = y_pix
                     shift[-1] = x_pix
 
+                    phasor_rotated = _scipy.ndimage.rotate(phasor,
+                                                           theta_z.to_value(u.deg), 
+                                                           axes=(-2,-1))
                     phasor_shifted = _scipy.ndimage.shift(phasor, shift)
                     return phasor_shifted
 
@@ -1030,7 +1052,7 @@ class DynamicFresnelOpticalSystem(poppy.FresnelOpticalSystem):
             wavefront *= optic # this implicitly calls get_phasor_shifted  
 
             # restore original get_phasor method
-            if (x != 0) or (y != 0):
+            if (x != 0) or (y != 0) or (theta_z != 0):
                 optic.get_phasor = get_phasor_orig
 
             # apply the tilt from the rigid body motion
