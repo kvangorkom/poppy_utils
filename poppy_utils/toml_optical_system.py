@@ -355,7 +355,7 @@ def construct_wavefront(wf_dict):
     else:
         return wf_constructor(**wf_dict)
 
-def load_optical_system(filename):
+def load_optical_system(filename, overwrite_osys=None, overwrite_wf=None,):
     """
     Load .toml file(s) into a parsed dictionary
 
@@ -363,10 +363,29 @@ def load_optical_system(filename):
     ----------
     filename : str/list
         Filename of a .toml file or a list of filenames for .toml files.
-
+    overwrite_osys : dict of dicts
+        Dictionary of values in the optical system to overwrite. See example below.
+    overwrite_wf : dict
+        Dictionary of values in the wavefront definition to overwrite. See example below.
     Returns
     --------
         poppy.FresnelOpticalSystem, poppy.Wavefront, parsed OrderedDict
+
+
+    Example overwrite_osys:
+
+    overwrite_osys = {
+        'M1_stop' : {'gap' : 0*u.mm},
+        'M1_segments' : {'gap' : 0*u.mm}
+    }
+
+    Example overwrite_wf:
+
+    overwrite_wf = {
+        'input_stokes_vector' : None,
+        'input_polarization' : (1, 0)
+    }
+
     """
     if isinstance(filename, str):
         systems_dict, wavefront_dict, metadata = toml2dict(filename)
@@ -381,6 +400,32 @@ def load_optical_system(filename):
             systems_dict = systems_dict + sys_dict
             wavefront_dict = wavefront_dict | wf_dict
             metadata = metadata | md
+
+
+    # overwrite .toml parameters in system_dict, if requested
+    if overwrite_osys is not None:
+        for osys in systems_dict: # loop over all systems
+            for optic in osys['optics']: # loop over all optics 
+                if optic.get('is_compound', False): # loop over optics in compound optic
+                    for suboptic in optic['optics']:
+                        if suboptic['name'] in overwrite_osys.keys():
+                            optic_to_modify = suboptic
+                            name = optic_to_modify['name']
+                            # update w/ new parameters
+                            print(f'Overwriting parameters for {name}')
+                            optic_to_modify.update(overwrite_osys[name])
+                else: # non-compound optic
+                    if optic['name'] in overwrite_osys.keys():
+                        optic_to_modify = optic
+                        name = optic_to_modify['name']
+                        #update w/ new parameters
+                        print(f'Overwriting parameters for {name}')
+                        optic_to_modify.update(overwrite_osys[name])
+
+    # overwrite .toml parameters in wavefront_dict, if requested
+    if overwrite_wf is not None:
+        print('Overwriting parameters for the default wavefront.')
+        wavefront_dict.update(overwrite_wf)
     
     osys = construct_optical_system(systems_dict)
     wf = construct_wavefront(wavefront_dict)
