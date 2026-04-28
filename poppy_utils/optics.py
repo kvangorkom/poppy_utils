@@ -487,6 +487,8 @@ class ScalarVortexMask(poppy.AnalyticOpticalElement):
 
     Parameters
     -----
+    wavetype : string
+        Specify the wavefront type as either 'Fresnel' or 'Fraunhofer'. 
     charge : float
         Indicates the number of phase wrappings from 0 to 2pi. 
         An even, integer charge is ideal for perfect starlight suppression, typically charge=2, 4, or 6.
@@ -506,9 +508,10 @@ class ScalarVortexMask(poppy.AnalyticOpticalElement):
 
     Returns the optical path difference (OPD) in meters. 
     """
-    def __init__(self, charge=6, dimple_radius=None, f_number=50, ep_diam=None, design_wl=None, svc_type='sawtooth', name=None, **kwargs):
+    def __init__(self, wavetype='Fraunhofer', charge=6, dimple_radius=None, f_number=50, ep_diam=None, design_wl=None, svc_type='sawtooth', name=None, **kwargs):
         if name is None:
             name = 'SVC'
+        self.wavetype = wavetype
         self.charge = charge
         self.dimple_radius = dimple_radius
         self.f_number = f_number
@@ -519,12 +522,20 @@ class ScalarVortexMask(poppy.AnalyticOpticalElement):
 
     def get_opd(self, wave):
         y, x = wave.coordinates()
+        # Scale of the wave coordinates is arcsec/pixel for both Fraunhofer and Fresnel modes
+        # print(wave.pixelscale)
         azimuthal_phase = self.charge * xp.arctan2(y, x)
 
-        is_angular = False
-        if hasattr(wave, 'pixelscale') and hasattr(wave.pixelscale, 'unit'):
-            if wave.pixelscale.unit.is_equivalent(u.arcsec / u.pixel):
-                is_angular = True
+        # is_angular = False
+        # if hasattr(wave, 'pixelscale') and hasattr(wave.pixelscale, 'unit'):
+        #     if wave.pixelscale.unit.is_equivalent(u.arcsec / u.pixel):
+        #         is_angular = True
+        #         print(wave.pixelscale)
+        
+        # print(type(wave)) 
+        # print(type(wave).__name__)
+        # sys_dict, wf_dict, md = toml2dict(fn)
+        # print(wf_dict.pop('optic_type'))
 
         if self.svc_type == 'sawtooth':
             relative_phase = xp.mod(azimuthal_phase, 2*xp.pi)
@@ -532,6 +543,8 @@ class ScalarVortexMask(poppy.AnalyticOpticalElement):
             relative_phase = (xp.real(xp.exp(1j*azimuthal_phase)) + 1) * xp.pi
         elif self.svc_type == 'classic':
             relative_phase = (xp.arctan2(y, x) + xp.pi) * self.charge
+        else:
+            raise ValueError("Invalid svc_type. Must be either 'sawtooth', 'cosine', or 'classic'.")
         
         if self.design_wl is None:
             wl_m = wave.wavelength.to_value(u.meter)
@@ -544,7 +557,7 @@ class ScalarVortexMask(poppy.AnalyticOpticalElement):
             r = xp.sqrt(x**2 + y**2)
             dimple_coef = self.dimple_radius.value if hasattr(self.dimple_radius, 'unit') else float(self.dimple_radius)
 
-            if is_angular:
+            if self.wavetype=='Fraunhofer':
                 # Fraunhofer mode works in angles (arcsec)
                 # Safely handle ep_diam if it is passed as a string
                 if isinstance(self.ep_diam, str):
@@ -553,10 +566,22 @@ class ScalarVortexMask(poppy.AnalyticOpticalElement):
                 D_m = self.ep_diam.to_value(u.meter) if hasattr(self.ep_diam, 'unit') else self.ep_diam
                 dimple_threshold = ((dimple_coef * wl_m / D_m) * u.radian).to_value(u.arcsec)
 
-            else:
-                # Fresnel mode works directly in meters
-                dimple_threshold = (dimple_coef * wl_m * self.f_number)
+            elif self.wavetype=='Fresnel':
+                # Fresnel mode works directly in meters. CHECK?
+                # f_number is unitless, so is wl_m if the design wavelength is specified without units
+                # dimple_threshold = (dimple_coef * wl_m * self.f_number) # should be in meters
+                if isinstance(self.ep_diam, str):
+                    self.ep_diam = u.Quantity(self.ep_diam)
+                
+                D_m = self.ep_diam.to_value(u.meter) if hasattr(self.ep_diam, 'unit') else self.ep_diam
+                dimple_threshold = ((dimple_coef * wl_m / D_m) * u.radian).to_value(u.arcsec)
 
+            else: 
+                raise ValueError("Invalid wavetype. Must be either 'Fraunhofer' or 'Fresnel'.")
+
+            # print(self.wavetype)
+            # print(dimple_threshold)
+            # print(hasattr(dimple_threshold, 'unit'))
             # Apply the Roddier dimple
             opd[r < dimple_threshold] += (wl_m / 2.0) 
 
