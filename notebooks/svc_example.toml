@@ -1,0 +1,74 @@
+notes = 'SVC Fraunhofer Model'
+
+[wavefront]
+optic_type = 'poppy.Wavefront'
+wavelength = '630nm'
+npix = 512 # original
+oversample = 4 # inverse of osys.beam_ratio
+diam = '15mm'
+
+[[osys]]
+optic_type = 'poppy.OpticalSystem'
+name='SCoOB-pre-FPM'
+pupil_diameter = '15mm'
+
+npix=512
+oversample = 4
+
+# To replace primary with a monolithic aperture:
+[[osys.optics]]
+name='Aperture'
+planetype = 'poppy.optics.PlaneType.pupil' 
+optic_type = 'poppy.CircularAperture'
+radius = '7.5mm'
+
+# ------ FPM optical system -------
+
+[[osys]]
+name='FPM'
+optic_type = 'poppy.OpticalSystem'
+npix=512
+oversample=4
+
+[osys.wrapper]
+optic_type = 'poppy_utils.MultiScaleCoronagraph'
+oversample = 60 # oversample in lambda/D
+fpm_box = 100 # size of the box
+to_fpm = false # can't convert from Fraunhofer image to Fresnel
+
+[[osys.optics]]
+name = 'pupil'
+optic_type = 'poppy.ScalarTransmission'
+planetype = 'poppy.optics.PlaneType.pupil' # only needed for Fraunhofer systems
+
+[[osys.optics]]
+name='SVC'
+planetype = 'poppy.optics.PlaneType.image'
+optic_type = 'poppy_utils.ScalarVortexMask'
+wavetype = 'Fraunhofer'
+# dimple_radius = 0.6
+ep_diam = '15mm'
+charge = 6
+svc_type = 'sawtooth'
+
+# ------ Post-FPM optical system -------
+
+[[osys]]
+optic_type = 'poppy.OpticalSystem'
+name='post FPM'
+npix=512
+oversample = 4
+
+[[osys.optics]]
+planetype = 'poppy.optics.PlaneType.pupil'
+name = 'Lyot_Stop'
+optic_type = 'poppy.CircularAperture'
+radius = '6.75mm' # 90% of pupil radius
+
+[[osys.optics]]
+name = 'Detector'
+planetype = 'poppy.optics.PlaneType.detector'
+optic_type = 'poppy.Detector'
+pixelscale = '1.3949658arcsec/pixel'
+fov_pixels = 256
+oversample = 1

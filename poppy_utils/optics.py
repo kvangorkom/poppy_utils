@@ -10,9 +10,10 @@ from scipy.special import hyp2f1
 
 import poppy
 from poppy import utils, wfe
-from poppy.accel_math import xp
+from poppy.accel_math import xp, _r
 from poppy.wfe import _wave_y_x_to_rho_theta
 from poppy.utils import _log, pad_or_crop_to_shape
+import matplotlib.pyplot as plt
 
 tukey =  poppy.accel_math._scipy.signal.windows.tukey
 
@@ -487,17 +488,14 @@ class ScalarVortexMask(poppy.AnalyticOpticalElement):
 
     Parameters
     -----
-    wavetype : string
-        Specify the wavefront type as either 'Fresnel' or 'Fraunhofer'. 
     charge : float
         Indicates the number of phase wrappings from 0 to 2pi. 
         An even, integer charge is ideal for perfect starlight suppression, typically charge=2, 4, or 6.
     dimple_radius : float
         Unitless coefficient describing the angular size of the Roddier dimple radius in lambda/D. 
-    f_number : float
-        F/# defined as (focal length)/(diameter of entrance pupil), only needed for Fresnel systems. 
+        If specified, must also provide ep_diam. 
     ep_diam : astropy quantity
-        Entrance pupil diameter, required to specify in Fraunhofer mode. 
+        Entrance pupil diameter (physical size). 
     design_wl : astropy quantity
         Specify the design wavelength for which the SVC dimple is optimized. Make sure to include units of length. 
     svc_type : string
@@ -508,82 +506,52 @@ class ScalarVortexMask(poppy.AnalyticOpticalElement):
 
     Returns the optical path difference (OPD) in meters. 
     """
-    def __init__(self, wavetype='Fraunhofer', charge=6, dimple_radius=None, f_number=50, ep_diam=None, design_wl=None, svc_type='sawtooth', name=None, **kwargs):
+    def __init__(self, charge=6, design_wl=None, dimple_radius=None, ep_diam=None, svc_type='sawtooth', name=None, **kwargs):
         if name is None:
             name = 'SVC'
-        self.wavetype = wavetype
         self.charge = charge
-        self.dimple_radius = dimple_radius
-        self.f_number = f_number
+        self.dimple_radius = dimple_radius # angular l/D coefficient
         self.ep_diam = ep_diam
         self.design_wl = design_wl
         self.svc_type = svc_type
         super().__init__(name=name, **kwargs)
 
     def get_opd(self, wave):
-        y, x = wave.coordinates()
+        y, x = self.get_coordinates(wave) # copy the notation of CircularAperture
         # Scale of the wave coordinates is arcsec/pixel for both Fraunhofer and Fresnel modes
-        # print(wave.pixelscale)
         azimuthal_phase = self.charge * xp.arctan2(y, x)
-
-        # is_angular = False
-        # if hasattr(wave, 'pixelscale') and hasattr(wave.pixelscale, 'unit'):
-        #     if wave.pixelscale.unit.is_equivalent(u.arcsec / u.pixel):
-        #         is_angular = True
-        #         print(wave.pixelscale)
         
-        # print(type(wave)) 
-        # print(type(wave).__name__)
-        # sys_dict, wf_dict, md = toml2dict(fn)
-        # print(wf_dict.pop('optic_type'))
-
         if self.svc_type == 'sawtooth':
-            relative_phase = xp.mod(azimuthal_phase, 2*xp.pi)
+            relative_phase = xp.mod(azimuthal_phase, 2 * xp.pi)
         elif self.svc_type == 'cosine': 
-            relative_phase = (xp.real(xp.exp(1j*azimuthal_phase)) + 1) * xp.pi
+            relative_phase = (xp.real(xp.exp(1j * azimuthal_phase)) + 1) * xp.pi
         elif self.svc_type == 'classic':
             relative_phase = (xp.arctan2(y, x) + xp.pi) * self.charge
         else:
             raise ValueError("Invalid svc_type. Must be either 'sawtooth', 'cosine', or 'classic'.")
         
+        system_wl_m = wave.wavelength.to_value(u.meter)
+
         if self.design_wl is None:
-            wl_m = wave.wavelength.to_value(u.meter)
+            wl_m = system_wl_m
         else:
             wl_m = self.design_wl.to_value(u.meter) if hasattr(self.design_wl, 'unit') else float(self.design_wl)
         
-        opd = (relative_phase / (2 * xp.pi)) * wl_m
+        opd = (relative_phase / (2 * xp.pi)) * wl_m # OPD is fixed by the design wavelength, value in meters
 
         if self.dimple_radius is not None:
-            r = xp.sqrt(x**2 + y**2)
+            # r represents a value in arcsec
+            r = _r(x, y) # sqrt(x ** 2 + y ** 2)
             dimple_coef = self.dimple_radius.value if hasattr(self.dimple_radius, 'unit') else float(self.dimple_radius)
 
-            if self.wavetype=='Fraunhofer':
-                # Fraunhofer mode works in angles (arcsec)
-                # Safely handle ep_diam if it is passed as a string
-                if isinstance(self.ep_diam, str):
+            if isinstance(self.ep_diam, str):
                     self.ep_diam = u.Quantity(self.ep_diam)
-                
-                D_m = self.ep_diam.to_value(u.meter) if hasattr(self.ep_diam, 'unit') else self.ep_diam
-                dimple_threshold = ((dimple_coef * wl_m / D_m) * u.radian).to_value(u.arcsec)
+            D_m = self.ep_diam.to_value(u.meter) if hasattr(self.ep_diam, 'unit') else self.ep_diam
+            # Convert angular dimple coefficient to arcseconds
+            dimple_threshold = ((dimple_coef * wl_m / D_m) * u.radian).to_value(u.arcsec)
 
-            elif self.wavetype=='Fresnel':
-                # Fresnel mode works directly in meters. CHECK?
-                # f_number is unitless, so is wl_m if the design wavelength is specified without units
-                # dimple_threshold = (dimple_coef * wl_m * self.f_number) # should be in meters
-                if isinstance(self.ep_diam, str):
-                    self.ep_diam = u.Quantity(self.ep_diam)
-                
-                D_m = self.ep_diam.to_value(u.meter) if hasattr(self.ep_diam, 'unit') else self.ep_diam
-                dimple_threshold = ((dimple_coef * wl_m / D_m) * u.radian).to_value(u.arcsec)
-
-            else: 
-                raise ValueError("Invalid wavetype. Must be either 'Fraunhofer' or 'Fresnel'.")
-
-            # print(self.wavetype)
-            # print(dimple_threshold)
-            # print(hasattr(dimple_threshold, 'unit'))
             # Apply the Roddier dimple
-            opd[r < dimple_threshold] += (wl_m / 2.0) 
+            opd[r < dimple_threshold] += (wl_m / 2.0) # add half a wave of the design wavelength
 
         return opd
 
