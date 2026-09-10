@@ -106,7 +106,7 @@ def parse_dict(tomldict):
             val[skey] = parse_dict(sval)
 
         # parse optic_type to poppy object
-        if skey in ['optic_type', 'planetype']: #'planetype'
+        if skey in ['optic_type', 'planetype', 'refractive_func']: #'planetype'
             val[skey] = parse_class_str(sval)
 
         # traverse lists to parse
