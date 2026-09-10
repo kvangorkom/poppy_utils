@@ -311,12 +311,12 @@ class FITSJonesOpticalElement(poppy.JonesMatrixOpticalElement):
             jones_cube = f[0].data
 
         # 2x2xYxX jones pupil (TO DO: check if Exy and Eyx are flipped)
-        jones_matrix = xp.asarray(
-            [[jones_cube[0] + 1j*jones_cube[1], # Exx_re + 1j*Exx_im
-              jones_cube[2] + 1j*jones_cube[3]], # Exy_re + 1j*Exy_im 
-             [jones_cube[4] + 1j*jones_cube[5], # Eyx_re + 1j*Eyx_im
-              jones_cube[6] + 1j*jones_cube[7]]] # Eyy_re + 1j*Eyy_im
-        )
+        # jones_matrix = xp.asarray(
+        #     [[jones_cube[0] + 1j*jones_cube[1], # Exx_re + 1j*Exx_im
+        #       jones_cube[2] + 1j*jones_cube[3]], # Exy_re + 1j*Exy_im 
+        #      [jones_cube[4] + 1j*jones_cube[5], # Eyx_re + 1j*Eyx_im
+        #       jones_cube[6] + 1j*jones_cube[7]]] # Eyy_re + 1j*Eyy_im
+        # )
 
         jones_matrix = xp.asarray(
             [[jones_cube[0] + 1j*jones_cube[1], # Exx_re + 1j*Exx_im
@@ -420,12 +420,12 @@ class MultiScaleCoronagraph(poppy.poppy_core.OpticalSystem):
         
         # taken from MFT Coronagraph
         #if self.wavelength is None:
-            # set this once to avoid changing sampling when evaluating at other wavelengths (I think)
+        #    # set this once to avoid changing sampling when evaluating at other wavelengths (I think)
         self.wavelength  = wavefront.wavelength
         metadet_pixelscale = ((self.wavelength / pupil_diam).decompose()
-                              * u.radian).to(u.arcsec) / self.oversample / 2 / u.pixel
+                            * u.radian).to(u.arcsec) / self.oversample / 2 / u.pixel
         self.fpm_highres = poppy.Detector(metadet_pixelscale, fov_arcsec=self.fpm_box * 2,
-                                      name='Oversampled Occulter Plane')
+                                    name='Oversampled Occulter Plane')
 
         #if return_intermediates:
         #    intermediate_wfs.append(wavefront_cor.copy())
@@ -867,6 +867,23 @@ def get_refractive_index_fused_silica(wave):
     n=(1+0.6961663/(1-(0.0684043/wave)**2)+0.4079426/(1-(0.1162414/wave)**2)+0.8974794/(1-(9.896161/wave)**2))**.5
     return n
 
+
+def get_refractive_index_nbk7(wave):
+    """
+    Refractive index of Schott N-BK7, from https://refractiveindex.info/?shelf=specs&book=SCHOTT-optical&page=N-BK7
+
+    Parameters
+    -----------
+    wave : float
+        Wavelength in microns
+
+    Returns
+    -------
+    refractive index at wavelength wave
+    """
+    n=(1+1.03961212/(1-0.00600069867/wave**2)+0.231792344/(1-0.0200179144/wave**2)+1.01046945/(1-103.560653/wave**2))**.5
+    return n
+
 class WedgedWindow(poppy.AnalyticOpticalElement):
     """
     Get chromatic dispersion from wedged window.
@@ -923,12 +940,11 @@ class WedgedWindow(poppy.AnalyticOpticalElement):
         self.tip_coeff  = np.sin(self.clocking.to_value(u.radian))
         self.tilt_coeff = np.cos(self.clocking.to_value(u.radian))
         
-        # turn into tip/tilt
+        # turn into tip/tilt (convert from angle to RMS)
         self.tilt_optic.coefficients[1] = disp.to_value(u.radian) * self.radius * -1/2 * self.tip_coeff
         self.tilt_optic.coefficients[2] = disp.to_value(u.radian) * self.radius * -1/2 * self.tilt_coeff
 
         return self.tilt_optic.get_opd(wave)
-
 
 class DynamicFresnelOpticalSystem(poppy.FresnelOpticalSystem):
     """
