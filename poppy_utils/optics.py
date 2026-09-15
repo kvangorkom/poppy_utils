@@ -1,6 +1,7 @@
-from copy import deepcopy
+from copy import deepcopy, copy
 from collections import OrderedDict
 from pathlib import Path
+from time import time
 
 import astropy.units as u
 from astropy.io import fits
@@ -1039,6 +1040,37 @@ class DynamicFresnelOpticalSystem(poppy.FresnelOpticalSystem):
             if not isinstance(theta_z, u.Quantity):
                 theta_z = theta_z * u.rad
 
+
+            # for detectors, we have to define a new resampling function 
+            # to force the shift/rotation to happen before resampling (which is called inside of wavefront.propagate_to)
+            if isinstance(optic, poppy.Detector):
+                print(optic.name)
+                if (x != 0) or (y != 0) or (theta_z != 0):
+                    # copy (not deepcopy!) the original function -- needs to be a copy to get updated pixelscale after wavefront prop
+                    _resample_wavefront_pixelscale_orig = copy(wavefront._resample_wavefront_pixelscale)
+                    def _resample_wavefront_pixescale_shifted(optic):
+                        # shift and rotate the wavefront
+                        x_pix = -(x / wavefront.pixelscale).to_value(u.pix)
+                        y_pix = -(y / wavefront.pixelscale).to_value(u.pix)
+    
+                        # phasor may have one or two extra axes for polarization
+                        shift = xp.zeros(wavefront.wavefront.ndim, dtype=float)
+                        shift[-2] = y_pix
+                        shift[-1] = x_pix   
+    
+                        wf_rotated = _scipy.ndimage.rotate(wavefront.wavefront,
+                                                                theta_z.to_value(u.deg), 
+                                                                axes=(-2,-1))
+                        wf_shifted = _scipy.ndimage.shift(wf_rotated, shift)
+
+                        wavefront.wavefront = wf_shifted
+
+                        # then call the original _resample_wavefront_pixelscale
+                        _resample_wavefront_pixelscale_orig(optic)
+
+                    # monkeypatch wavefront._resample_wavefront_pixescale
+                    wavefront._resample_wavefront_pixelscale = _resample_wavefront_pixescale_shifted
+                
             # The actual propagation to the optic plane
             wavefront.propagate_to(optic, distance + z)
             
@@ -1055,12 +1087,12 @@ class DynamicFresnelOpticalSystem(poppy.FresnelOpticalSystem):
                     # phasor may have one or two extra axes for polarization
                     shift = xp.zeros(phasor.ndim, dtype=float)
                     shift[-2] = y_pix
-                    shift[-1] = x_pix
+                    shift[-1] = x_pix   
 
                     phasor_rotated = _scipy.ndimage.rotate(phasor,
                                                            theta_z.to_value(u.deg), 
                                                            axes=(-2,-1))
-                    phasor_shifted = _scipy.ndimage.shift(phasor, shift)
+                    phasor_shifted = _scipy.ndimage.shift(phasor_rotated, shift)
                     return phasor_shifted
 
                 optic.get_phasor = get_phasor_shifted
@@ -1070,6 +1102,10 @@ class DynamicFresnelOpticalSystem(poppy.FresnelOpticalSystem):
             # restore original get_phasor method
             if (x != 0) or (y != 0) or (theta_z != 0):
                 optic.get_phasor = get_phasor_orig
+
+                # restore original detector resampling method
+                if isinstance(optic, poppy.Detector):
+                    wavefront._resample_wavefront_pixelscale = _resample_wavefront_pixelscale_orig
 
             # apply the tilt from the rigid body motion
             if (theta_x != 0) or (theta_y != 0):
