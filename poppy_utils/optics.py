@@ -556,6 +556,75 @@ class ScalarVortexMask(poppy.AnalyticOpticalElement):
         return opd
 
 
+class CascadedScalarVortexMask(poppy.AnalyticOpticalElement):
+    """
+    Cascaded scalar vortex coronagraph with option to include a Roddier dimple in the center.
+    Made as the sum of two sawtooth vortices of different charges.
+    The effect of the Roddier dimple is to add a pi phase shift in the interior region of the mask. 
+    If using in Fraunhofer mode, make sure to specify plane type as "image". 
+
+    Parameters
+    -----
+    charge1 : float
+        Indicates the number of phase wrappings from 0 to 2pi. 
+        An even, integer charge is ideal for perfect starlight suppression, typically charge=2, 4, or 6.
+    charge2 : float
+        An additional charge to superimpose on the first. 
+    design_wl : astropy quantity
+        Wavelength for which the SVC dimple is optimized. Make sure to include units of length. 
+    dimple_radius : float
+        Unitless coefficient describing the angular size of the Roddier dimple radius in lambda/D. 
+        If specified, must also provide ep_diam. 
+    ep_diam : astropy quantity
+        Entrance pupil diameter (physical size). 
+
+    Returns the optical path difference (OPD) in meters. 
+    """
+    def __init__(self, charge1=18, charge2=-12, design_wl=None, dimple_radius=None, ep_diam=None, name=None, **kwargs):
+        if name is None:
+            name = 'Cascaded SVC'
+        self.charge1 = charge1
+        self.charge2 = charge2
+        self.design_wl = design_wl
+        self.dimple_radius = dimple_radius # angular l/D coefficient
+        self.ep_diam = ep_diam
+        super().__init__(name=name, **kwargs)
+
+    def get_opd(self, wave):
+        y, x = self.get_coordinates(wave) # copy the notation of CircularAperture
+        # Scale of the wave coordinates is arcsec/pixel for both Fraunhofer and Fresnel modes
+        azimuthal_phase1 = self.charge1 * xp.arctan2(y, x)
+        azimuthal_phase2 = self.charge2 * xp.arctan2(y, x)
+
+        relative_phase1 = xp.mod(azimuthal_phase1, 2 * xp.pi)
+        relative_phase2 = xp.mod(azimuthal_phase2, 2 * xp.pi)
+        cascaded_phase = relative_phase1 + relative_phase2
+        system_wl_m = wave.wavelength.to_value(u.meter)
+
+        if self.design_wl is None:
+            wl_m = system_wl_m
+        else:
+            wl_m = self.design_wl.to_value(u.meter) if hasattr(self.design_wl, 'unit') else float(self.design_wl)
+        
+        opd = (cascaded_phase / (2 * xp.pi)) * wl_m # OPD is fixed by the design wavelength, value in meters
+
+        if self.dimple_radius is not None:
+            # r represents a value in arcsec
+            r = _r(x, y) # sqrt(x ** 2 + y ** 2)
+            dimple_coef = self.dimple_radius.value if hasattr(self.dimple_radius, 'unit') else float(self.dimple_radius)
+
+            if isinstance(self.ep_diam, str):
+                    self.ep_diam = u.Quantity(self.ep_diam)
+            D_m = self.ep_diam.to_value(u.meter) if hasattr(self.ep_diam, 'unit') else self.ep_diam
+            # Convert angular dimple coefficient to arcseconds
+            dimple_threshold = ((dimple_coef * wl_m / D_m) * u.radian).to_value(u.arcsec)
+
+            # Apply the Roddier dimple
+            opd[r < dimple_threshold] += (wl_m / 2.0) # add half a wave of the design wavelength
+
+        return opd
+
+
 class ABCPSDWFE(poppy.WavefrontError):
     """
     Statistical ABC PSD WFE class from power law for optical noise.
