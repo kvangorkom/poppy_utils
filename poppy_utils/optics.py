@@ -1040,14 +1040,14 @@ class DynamicFresnelOpticalSystem(poppy.FresnelOpticalSystem):
             if not isinstance(theta_z, u.Quantity):
                 theta_z = theta_z * u.rad
 
+            shifted = (x != 0) or (y != 0) or (theta_z != 0)
 
             # for detectors, we have to define a new resampling function 
             # to force the shift/rotation to happen before resampling (which is called inside of wavefront.propagate_to)
             if isinstance(optic, poppy.Detector):
-                print(optic.name)
-                if (x != 0) or (y != 0) or (theta_z != 0):
-                    # copy (not deepcopy!) the original function -- needs to be a copy to get updated pixelscale after wavefront prop
-                    _resample_wavefront_pixelscale_orig = copy(wavefront._resample_wavefront_pixelscale)
+                #print(optic.name)
+                if shifted:
+                    _resample_wavefront_pixelscale_orig = wavefront._resample_wavefront_pixelscale
                     def _resample_wavefront_pixescale_shifted(optic):
                         # shift and rotate the wavefront
                         x_pix = -(x / wavefront.pixelscale).to_value(u.pix)
@@ -1076,8 +1076,8 @@ class DynamicFresnelOpticalSystem(poppy.FresnelOpticalSystem):
             
             # monkeypatch optic.get_phasor so that a translated phasor is generated
             # when super().__imul__ is called
-            if (x != 0) or (y != 0) or (theta_z != 0):
-                get_phasor_orig = deepcopy(optic.get_phasor)
+            if shifted:
+                get_phasor_orig = optic.get_phasor #deepcopy(optic.get_phasor)
                 def get_phasor_shifted(optic):
                     phasor = get_phasor_orig(wavefront)
                     # shift
@@ -1096,16 +1096,18 @@ class DynamicFresnelOpticalSystem(poppy.FresnelOpticalSystem):
                     return phasor_shifted
 
                 optic.get_phasor = get_phasor_shifted
- 
-            wavefront *= optic # this implicitly calls get_phasor_shifted  
 
-            # restore original get_phasor method
-            if (x != 0) or (y != 0) or (theta_z != 0):
-                optic.get_phasor = get_phasor_orig
+            try:
+                wavefront *= optic # this implicitly calls get_phasor_shifted  
+            finally: # clean up, or in case of exception
 
-                # restore original detector resampling method
-                if isinstance(optic, poppy.Detector):
-                    wavefront._resample_wavefront_pixelscale = _resample_wavefront_pixelscale_orig
+                # restore original get_phasor method
+                if shifted:
+                    del optic.get_phasor
+
+                    # restore original detector resampling method
+                    if isinstance(optic, poppy.Detector):
+                        del wavefront._resample_wavefront_pixelscale #wavefront._resample_wavefront_pixelscale = _resample_wavefront_pixelscale_orig
 
             # apply the tilt from the rigid body motion
             if (theta_x != 0) or (theta_y != 0):
